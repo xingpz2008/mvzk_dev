@@ -26,31 +26,40 @@ if(APPLE)
 endif()
 
 # ==========================================
-# 2. 基础编译选项
-# ==========================================
-# ==========================================
-# 2. 基础编译选项 (修正版)
+# 2. 基础编译选项 (极致性能版)
 # ==========================================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 默认构建类型设置为 Release (防止忘记加 -D 参数)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+endif()
 
 # 通用 Flag (架构相关)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     set(ARCH_FLAGS "-Wno-ignored-attributes -Wno-unused-result")
 else()
-    set(ARCH_FLAGS "-maes -msse4.1 -mpclmul -march=native -Wno-ignored-attributes -Wno-unused-result")
+    # 针对 AWS Intel 芯片的极限配置 (-unroll-loops 展开循环进一步压榨流水线)
+    set(ARCH_FLAGS "-maes -msse4.1 -mpclmul -march=native -funroll-loops -Wno-ignored-attributes -Wno-unused-result")
 endif()
 
-# 【关键】根据构建类型设置优化等级
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     message(STATUS "Build type: DEBUG (Optimizations OFF)")
-    # -O0: 关闭优化 (方便调试)
-    # -g:  生成调试信息
-    # -fno-inline: 禁止内联 (防止函数跳来跳去)
     add_compile_options(${ARCH_FLAGS} -O0 -g -ggdb -fno-inline)
 else()
-    message(STATUS "Build type: RELEASE (Optimizations ON)")
+    message(STATUS "Build type: RELEASE (Optimizations ON + LTO)")
     add_compile_options(${ARCH_FLAGS} -O3)
+    
+    # 开启 LTO 链接期优化 (神级性能开关)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT error)
+    if(ipo_supported)
+        message(STATUS "IPO / LTO supported and enabled.")
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else()
+        message(STATUS "IPO / LTO not supported: ${error}")
+    endif()
 endif()
 
 # ==========================================
