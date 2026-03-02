@@ -1,0 +1,26 @@
+# .gitignore
+
+# 屏蔽第三方依赖
+emp-zk/
+emp-tool/
+emp-ot/
+
+# 屏蔽编译产物
+build/
+bin/
+*.o
+*.so
+*.a
+
+# 屏蔽 IDE 配置文件
+.vscode/
+.idea/
+
+# 屏蔽可能生成的临时测试数据
+*.bin
+*.dat
+
+/test/dev_test
+TODO
+
+.DS_Store
