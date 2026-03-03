@@ -140,12 +140,15 @@ LOG_ERROR("Shape mismatch! Expected " << expected_size << ", got " << actual);
 
 // 功能：Dst += LHS * RHS
 // 优化：IKJ Loop Reordering + OpenMP
+/*
 static void matrix_mul_acc_kernel(
     uint64_t* __restrict__ Dst, 
     const uint64_t* __restrict__ LHS, 
     const uint64_t* __restrict__ RHS,
     int M, int K, int N
 ) {
+
+    size_t total_work = (size_t)M * N * K;
     // 外层循环并行化 (按行分块)
     #pragma omp parallel for
     for (int i = 0; i < M; ++i) {
@@ -173,6 +176,71 @@ static void matrix_mul_acc_kernel(
                 // 累加到目标矩阵 (Cumulative)
                 // 这里必须是 add_mod (+=)，因为 Prover 的卷积逻辑依赖累加
                 Dst[i * N + j] = add_mod(Dst[i * N + j], prod);
+            }
+        }
+    }
+}
+    */
+
+// ... existing code ...
+
+static void matrix_mul_acc_kernel(
+    uint64_t* __restrict__ Dst, 
+    const uint64_t* __restrict__ LHS, 
+    const uint64_t* __restrict__ RHS,
+    int M, int K, int N
+) {
+    // 估算总工作量
+    size_t total_work = (size_t)M * N * K;
+
+    // 如果工作量太小，强制串行，避免线程开销
+    if (total_work < MVZK_OMP_SIZE_THRESHOLD) {
+        for (int i = 0; i < M; ++i) {
+            for (int k = 0; k < K; ++k) {
+                uint64_t a_val = LHS[i * K + k];
+                if (a_val == 0) continue;
+                for (int j = 0; j < N; ++j) {
+                    uint64_t prod = mult_mod(a_val, RHS[k * N + j]);
+                    Dst[i * N + j] = add_mod(Dst[i * N + j], prod);
+                }
+            }
+        }
+        return;
+    }
+
+    // 如果工作量足够，且 M 足够大，按行并行
+    if (M >= 4) { // 至少每个线程能分到一点点行
+        #pragma omp parallel for
+        for (int i = 0; i < M; ++i) {
+            for (int k = 0; k < K; ++k) {
+                uint64_t a_val = LHS[i * K + k];
+                if (a_val == 0) continue;
+                for (int j = 0; j < N; ++j) {
+                    uint64_t prod = mult_mod(a_val, RHS[k * N + j]);
+                    Dst[i * N + j] = add_mod(Dst[i * N + j], prod);
+                }
+            }
+        }
+    } 
+    // [高级优化] 如果 M=1 但 N 很大 (向量 x 矩阵)，我们需要并行化 N (内层循环)
+    else {
+        // M 既然很小，就不在 i 循环上并行了
+        for (int i = 0; i < M; ++i) {
+            // 对 N 维度进行并行
+            #pragma omp parallel for
+            for (int j = 0; j < N; ++j) {
+                uint64_t sum = 0; // 私有累加器
+                for (int k = 0; k < K; ++k) {
+                    // Dst[i, j] += LHS[i, k] * RHS[k, j]
+                    uint64_t term = mult_mod(LHS[i * K + k], RHS[k * N + j]);
+                    sum = add_mod(sum, term);
+                }
+                // 原子加或者非冲突写入
+                // 因为我们这里是直接覆盖写或者 +=，要注意 Dst 是否初始化
+                // 原始代码逻辑是 Dst += ... 所以这里需要小心
+                // 但由于 matrix_mul_acc_kernel 语义是 Accumulate，
+                // 且不同 j 对应不同内存地址，这里并行 j 是安全的！
+                Dst[i * N + j] = add_mod(Dst[i * N + j], sum);
             }
         }
     }
@@ -660,11 +728,14 @@ inline void base_mul_core(
     uint64_t* __restrict__ Res, size_t size) 
 {
     int dRes = dA + dB;
+    size_t total_ops = (size_t)(dRes + 1) * size;
     
     // 初始化 Res 数组为 0
-    #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
-    for (size_t i = 0; i < (size_t)(dRes + 1) * size; ++i) {
-        Res[i] = 0;
+    if (total_ops >= MVZK_OMP_SIZE_THRESHOLD) {
+        #pragma omp parallel for
+        for (size_t i = 0; i < total_ops; ++i) Res[i] = 0;
+    } else {
+        std::memset(Res, 0, total_ops * sizeof(uint64_t));
     }
 
     if (size >= MVZK_OMP_SIZE_THRESHOLD) {
@@ -685,7 +756,7 @@ inline void base_mul_core(
             }
         }
     } else {
-        #pragma omp parallel for if(dRes >= MVZK_OMP_DEGREE_THRESHOLD)
+        //#pragma omp parallel for if(dRes >= MVZK_OMP_DEGREE_THRESHOLD)
         for (int k = 0; k <= dRes; ++k) {
             uint64_t* res_ptr = Res + k * size;
             int start_i = std::max(0, k - dB);
@@ -736,7 +807,7 @@ inline void karatsuba_core(
         const uint64_t* p_hi = (i <= dA_hi) ? (A + (m + i) * size) : nullptr;
         uint64_t* p_sum = Asum.data() + i * size;
         
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+        //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t idx = 0; idx < size; ++idx) {
             uint64_t val_lo = p_lo ? p_lo[idx] : 0;
             uint64_t val_hi = p_hi ? p_hi[idx] : 0;
@@ -748,7 +819,7 @@ inline void karatsuba_core(
         const uint64_t* p_hi = (i <= dB_hi) ? (B + (m + i) * size) : nullptr;
         uint64_t* p_sum = Bsum.data() + i * size;
         
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+        //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t idx = 0; idx < size; ++idx) {
             uint64_t val_lo = p_lo ? p_lo[idx] : 0;
             uint64_t val_hi = p_hi ? p_hi[idx] : 0;
@@ -773,20 +844,20 @@ inline void karatsuba_core(
     }
 
     int dRes = dA + dB;
-    #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+    //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
     for (size_t i = 0; i < (size_t)(dRes + 1) * size; ++i) Res[i] = 0;
 
     for (int i = 0; i <= dP1; ++i) {
         uint64_t* dst = Res + i * size;
         uint64_t* src = P1.data() + i * size;
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+        //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t idx = 0; idx < size; ++idx) dst[idx] = add_mod(dst[idx], src[idx]);
     }
     if (dP2 >= 0) {
         for (int i = 0; i <= dP2; ++i) {
             uint64_t* dst = Res + (2 * m + i) * size;
             uint64_t* src = P2.data() + i * size;
-            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+            //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t idx = 0; idx < size; ++idx) dst[idx] = add_mod(dst[idx], src[idx]);
         }
     }
@@ -796,7 +867,7 @@ inline void karatsuba_core(
         const uint64_t* src1 = (i <= dP1) ? (P1.data() + i * size) : nullptr;
         const uint64_t* src2 = (dP2 >= 0 && i <= dP2) ? (P2.data() + i * size) : nullptr;
 
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
+        //#pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t idx = 0; idx < size; ++idx) {
             uint64_t val = src3[idx];
             if (src1) val = sub_mod(val, src1[idx]); 
