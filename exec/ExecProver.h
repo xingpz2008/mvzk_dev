@@ -256,7 +256,7 @@ public:
         const uint64_t* rhs_real = rhs.get_real_vals_ptr();
         uint64_t* res_real = res.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             res_real[i] = add_mod(lhs_real[i], rhs_real[i]);
         }
@@ -299,7 +299,7 @@ public:
             const uint64_t* rhs_ptr = (d_rhs >= 0) ? rhs.get_coeffs_ptr(d_rhs) : nullptr;
 
             // 并行加法
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t u = (lhs_ptr) ? lhs_ptr[i] : 0;
                 uint64_t v = (rhs_ptr) ? rhs_ptr[i] : 0;
@@ -372,7 +372,7 @@ public:
         const uint64_t* rhs_real = rhs.get_real_vals_ptr();
         uint64_t* res_real = res.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             res_real[i] = add_mod(lhs_real[i], PR - rhs_real[i]);
         }
@@ -396,7 +396,7 @@ public:
             const uint64_t* rhs_ptr = (d_rhs >= 0) ? rhs.get_coeffs_ptr(d_rhs) : nullptr;
 
             // 并行减法
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t u = (lhs_ptr) ? lhs_ptr[i] : 0;
                 uint64_t v = (rhs_ptr) ? rhs_ptr[i] : 0;
@@ -687,7 +687,7 @@ public:
         uint64_t* lhs_real = lhs.get_real_vals_ptr();
         const uint64_t* rhs_real = rhs.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             lhs_real[i] = add_mod(lhs_real[i], rhs_real[i]);
         }
@@ -741,7 +741,7 @@ public:
             // 直接把 RHS 加到对应位置即可
             
             size_t total_len = size * (new_deg + 1);
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < total_len; ++i) {
                 lhs_base[i] = add_mod(lhs_base[i], rhs_base[i]);
             }
@@ -764,7 +764,7 @@ public:
             uint64_t* lhs_base = lhs.flat_coeffs.data();
             const uint64_t* rhs_base = rhs.flat_coeffs.data();
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < rhs_len; ++i) {
                 lhs_base[start_idx + i] = add_mod(lhs_base[start_idx + i], rhs_base[i]);
             }
@@ -840,7 +840,7 @@ public:
         uint64_t* lhs_real = lhs.get_real_vals_ptr();
         const uint64_t* rhs_real = rhs.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             lhs_real[i] = add_mod(lhs_real[i], PR - rhs_real[i]);
         }
@@ -894,7 +894,7 @@ public:
             // 直接把 RHS 加到对应位置即可
             
             size_t total_len = size * (new_deg + 1);
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < total_len; ++i) {
                 lhs_base[i] = add_mod(lhs_base[i], PR - rhs_base[i]);
             }
@@ -917,7 +917,7 @@ public:
             uint64_t* lhs_base = lhs.flat_coeffs.data();
             const uint64_t* rhs_base = rhs.flat_coeffs.data();
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < rhs_len; ++i) {
                 lhs_base[start_idx + i] = add_mod(lhs_base[start_idx + i], PR - rhs_base[i]);
             }
@@ -948,7 +948,7 @@ public:
         // 1. 更新 Real Values (全部乘 val)
         uint64_t* real_ptr = lhs.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             real_ptr[i] = mult_mod(real_ptr[i], val);
         }
@@ -959,7 +959,7 @@ public:
         size_t total_coeffs_len = lhs.flat_coeffs.size();
         uint64_t* coeffs_ptr = lhs.flat_coeffs.data();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < total_coeffs_len; ++i) {
             coeffs_ptr[i] = mult_mod(coeffs_ptr[i], val);
         }
@@ -999,7 +999,7 @@ public:
                 int start_i = std::max(0, k - rhs.degree);
                 int end_i = std::min(old_lhs.degree, k);
 
-                #pragma omp parallel for
+                #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
                 for (size_t idx = 0; idx < size; ++idx) {
                     uint64_t sum = 0;
                     for (int i = start_i; i <= end_i; ++i) {
@@ -1182,7 +1182,7 @@ public:
         // 1. 更新 Real Values (所有元素都加 val)
         uint64_t* real_ptr = lhs.get_real_vals_ptr();
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             real_ptr[i] = add_mod(real_ptr[i], val);
         }
@@ -1194,7 +1194,7 @@ public:
         // 获取最高阶系数块的指针
         uint64_t* highest_coeff_ptr = lhs.get_coeffs_ptr(lhs.degree);
 
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             highest_coeff_ptr[i] = add_mod(highest_coeff_ptr[i], val);
         }
@@ -1440,7 +1440,7 @@ public:
         uint64_t mask_0 = (1ULL << s_0) - 1;
         uint64_t mask_rest = (1ULL << s_rest) - 1;
 
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(n >= MVZK_OMP_SIZE_THRESHOLD)
         for(size_t i = 0; i < n; ++i) {
             uint64_t val = x_ptr[i];
             if (val > zero_point) {
@@ -1488,7 +1488,7 @@ public:
 
         for (int j = 0; j < digdec_k; ++j) {
             std::vector<uint64_t> seg_j_data(n);
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(n >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i = 0; i < n; ++i) seg_j_data[i] = flat_dig_dec[i * digdec_k + j];
 
             PolyTensor authenticated_seg_j = input(x.shape, seg_j_data);
@@ -1641,6 +1641,7 @@ public:
         std::vector<uint64_t> plain_max(M, 0);
         const uint64_t* in_ptr = pt_in.get_real_vals_ptr();
 
+        #pragma omp parallel for collapse(2) if(M >= MVZK_OMP_SIZE_THRESHOLD)
         for(int n=0; n<N; ++n) {
             for(int c=0; c<C; ++c) {
                 for(int ho=0; ho<H_out; ++ho) {
@@ -1699,7 +1700,7 @@ public:
 
             PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
 
-            #pragma omp parallel for collapse(4) schedule(static)
+            #pragma omp parallel for collapse(4) schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
             for(int n=0; n<N; ++n) {
                 for(int c=0; c<C; ++c) {
                     for(int ho=0; ho<H_out; ++ho) {
@@ -1737,7 +1738,7 @@ public:
             
             const uint64_t* y_hat_ptr = pt_y_hat_j.get_real_vals_ptr();
 
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i = 0; i < M; ++i) {
                 uint64_t abs_val = y_hat_ptr[i];
                 flat_dig_dec[i * digdec_k + 0] = abs_val & mask_0;
@@ -1752,7 +1753,7 @@ public:
 
             for (int d = 0; d < digdec_k; ++d) {
                 std::vector<uint64_t> seg_data(M);
-                #pragma omp parallel for schedule(static)
+                #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
                 for(size_t i=0; i<M; ++i) seg_data[i] = flat_dig_dec[i * digdec_k + d];
 
                 PolyTensor auth_seg = this->input({M}, seg_data);
@@ -1944,6 +1945,7 @@ public:
         std::vector<uint64_t> plain_max(M, 0); 
         const uint64_t* in_ptr = pt_in.get_real_vals_ptr();
 
+        #pragma omp parallel for collapse(2) if(M >= MVZK_OMP_SIZE_THRESHOLD)
         for(int n=0; n<N; ++n) {
             for(int c=0; c<C; ++c) {
                 for(int ho=0; ho<H_out; ++ho) {
@@ -1993,7 +1995,7 @@ public:
         // Step 3 & 9: Range Check x_max & Reconstruct Output (Truncated)
         // ======================================================
         std::vector<uint64_t> flat_max_dec(M * digdec_k, 0);
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
         for(size_t i = 0; i < M; ++i) {
             uint64_t abs_val = plain_max[i];
             flat_max_dec[i * digdec_k + 0] = abs_val & mask_0;
@@ -2009,7 +2011,7 @@ public:
 
         for (int d = 0; d < digdec_k; ++d) {
             std::vector<uint64_t> seg_data(M);
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i=0; i<M; ++i) seg_data[i] = flat_max_dec[i * digdec_k + d];
 
             PolyTensor auth_seg = this->input({M}, seg_data);
@@ -2044,7 +2046,7 @@ public:
 
             PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
 
-            #pragma omp parallel for collapse(4) schedule(static)
+            #pragma omp parallel for collapse(4) schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
             for(int n=0; n<N; ++n) {
                 for(int c=0; c<C; ++c) {
                     for(int ho=0; ho<H_out; ++ho) {
@@ -2077,7 +2079,7 @@ public:
             // 🌟 y_hat 也要用双轨拆解
             std::vector<uint64_t> flat_y_hat_dec(M * digdec_k, 0);
             const uint64_t* y_hat_ptr = pt_y_hat_j.get_real_vals_ptr();
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i = 0; i < M; ++i) {
                 uint64_t abs_val = y_hat_ptr[i];
                 flat_y_hat_dec[i * digdec_k + 0] = abs_val & mask_0;
@@ -2091,7 +2093,7 @@ public:
             PolyTensor X_recon;
             for (int d = 0; d < digdec_k; ++d) {
                 std::vector<uint64_t> seg_data(M);
-                #pragma omp parallel for schedule(static)
+                #pragma omp parallel for schedule(static) if(M >= MVZK_OMP_SIZE_THRESHOLD)
                 for(size_t i=0; i<M; ++i) seg_data[i] = flat_y_hat_dec[i * digdec_k + d];
 
                 PolyTensor auth_seg = this->input({M}, seg_data);
@@ -2287,7 +2289,9 @@ public:
         const uint64_t* in_real = pt_in.get_real_vals_ptr();
         uint64_t* out_real = pt_out.get_real_vals_ptr();
 
-        #pragma omp parallel for collapse(4)
+        size_t total_elements = (size_t)N * C * H_out * W_out;
+
+        #pragma omp parallel for collapse(4) if(total_elements >= MVZK_OMP_SIZE_THRESHOLD)
         for(int n=0; n<N; ++n) {
             for(int c=0; c<C; ++c) {
                 for(int ho=0; ho<H_out; ++ho) {
@@ -2485,7 +2489,7 @@ public:
 
         // 5. 并行填充数据 (Parallel Fill)
         // 利用 SoA 布局优势，数据是连续的，OpenMP + SIMD 效率极高
-        #pragma omp parallel for
+        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             // 提取 VOLE 数据
             // 假设 LOW64 是 MAC, HIGH64 是 Random u
@@ -2750,7 +2754,7 @@ protected:
             std::vector<uint64_t> chi_vec(len);
             this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i=0; i<len; ++i) {
                 chi_vec[i] = chi_vec[i] % PR; 
             }

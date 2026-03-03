@@ -309,7 +309,7 @@ inline PolyTensor fast_tree_product(std::vector<PolyTensor>& items) {
         // 【关键 2】并行计算 (无冲突)
         // 读: current_layer (只读)
         // 写: next_layer (只写，且每个线程写不同的 i)
-        #pragma omp parallel for
+        #pragma omp parallel for if(current_size >= MVZK_CONFIG_OMP_FAST_TREE_PRODUCT_SIZE_THRESHOLD)
         for (size_t i = 0; i < current_size / 2; ++i) {
             // current_layer[...] 的 is_consumed 会在 mul 内部被置为 true
             // 结果直接 Move 给 next_layer[i]
@@ -376,7 +376,8 @@ inline void im2col_kernel(
 
     // 并行化策略: 对 Batch 和 Output Pixels 并行
     // collapse(2) 意味着把 N 和 h_out 两个循环合并并行，增加并行度
-    #pragma omp parallel for collapse(2)
+    size_t total_parallel_tasks = (size_t)N * H_out * W_out;
+    #pragma omp parallel for collapse(2) if(total_parallel_tasks >= (MVZK_OMP_SIZE_THRESHOLD / 2))
     for (int n = 0; n < N; ++n) {
         for (int h_out = 0; h_out < H_out; ++h_out) {
             for (int w_out = 0; w_out < W_out; ++w_out) {
@@ -431,8 +432,9 @@ inline void transpose_weight_kernel(
     
     // Src Layout: C_out (最外层) -> K (内层打平)
     // Dst Layout: K (最外层) -> C_out (内层)
+    size_t total_elements = (size_t)C_out * K;
     
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) if(total_elements >= MVZK_OMP_SIZE_THRESHOLD)
     for (int co = 0; co < C_out; ++co) {
         for (int k = 0; k < K; ++k) {
             dst[k * C_out + co] = src[co * K + k];
@@ -452,7 +454,9 @@ inline void permute_and_add_bias_kernel(
 ) {
     bool use_scale = (bias_scale != 1);
 
-    #pragma omp parallel for collapse(3)
+    size_t total_elements = (size_t)N * H_out * W_out * C_out;
+
+    #pragma omp parallel for collapse(3) if(total_elements >= MVZK_OMP_SIZE_THRESHOLD)
     for (int n = 0; n < N; ++n) {
         for (int c = 0; c < C_out; ++c) {
             for (int h = 0; h < H_out; ++h) {
@@ -494,7 +498,11 @@ inline void transpose_matrix_kernel(
     uint64_t* __restrict__ dst,
     int Rows, int Cols
 ) {
-    #pragma omp parallel for collapse(2)
+
+    size_t total_elements = (size_t)Rows * Cols;
+    
+    // 【修正】
+    #pragma omp parallel for collapse(2) if(total_elements >= MVZK_OMP_SIZE_THRESHOLD)
     for (int r = 0; r < Rows; ++r) {
         for (int c = 0; c < Cols; ++c) {
             // Src: [r, c]
@@ -514,7 +522,10 @@ inline void add_bias_row_broadcast_kernel(
 ) {
     bool use_scale = (bias_scale != 1);
 
-    #pragma omp parallel for
+    size_t total_elements = (size_t)Rows * Cols;
+    
+    // 【修正】
+    #pragma omp parallel for if(total_elements >= MVZK_OMP_SIZE_THRESHOLD)
     for (int r = 0; r < Rows; ++r) {
         for (int c = 0; c < Cols; ++c) {
             uint64_t b_val = bias[c];
@@ -658,7 +669,7 @@ inline std::vector<uint64_t> real2fp(const std::vector<float>& input) {
 
     // 3. OpenMP 并行化
     // static 调度适合这种每个元素计算量完全相同的场景
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static) if(n >= MVZK_OMP_SIZE_THRESHOLD)
     for (size_t i = 0; i < n; ++i) {
         // 核心转换逻辑 (手动内联以确保性能)
         

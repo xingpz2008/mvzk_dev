@@ -269,7 +269,7 @@ public:
             // 【情况 A: 同阶相加】 (最常见)
             // K_res = K_lhs + K_rhs
             // 没有任何乘法，纯加法，速度最快
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 res_keys[i] = add_mod(lhs_keys[i], rhs_keys[i]);
             }
@@ -279,7 +279,7 @@ public:
             // K_res = K_lhs * delta^diff + K_rhs
             uint64_t scale = delta_pow(local_delta, offset_lhs);
             
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_lhs = mult_mod(lhs_keys[i], scale);
                 res_keys[i] = add_mod(term_lhs, rhs_keys[i]);
@@ -290,7 +290,7 @@ public:
             // K_res = K_lhs + K_rhs * delta^diff
             uint64_t scale = delta_pow(local_delta, offset_rhs);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_rhs = mult_mod(rhs_keys[i], scale);
                 res_keys[i] = add_mod(lhs_keys[i], term_rhs);
@@ -301,7 +301,7 @@ public:
             uint64_t scale_lhs = delta_pow(local_delta, offset_lhs);
             uint64_t scale_rhs = delta_pow(local_delta, offset_rhs);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_lhs = mult_mod(lhs_keys[i], scale_lhs);
                 uint64_t term_rhs = mult_mod(rhs_keys[i], scale_rhs);
@@ -374,7 +374,7 @@ public:
         
         if (offset_lhs == 0 && offset_rhs == 0) {
             // 【情况 A: 同阶相减】 (最快)
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 res_keys[i] = add_mod(lhs_keys[i], PR - rhs_keys[i]);
             }
@@ -383,7 +383,7 @@ public:
             // 【情况 B: LHS 低阶】 K_new = (K_lhs * scale) - K_rhs
             uint64_t scale = delta_pow(local_delta, offset_lhs);
             
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_lhs = mult_mod(lhs_keys[i], scale);
                 res_keys[i] = add_mod(term_lhs, PR - rhs_keys[i]);
@@ -393,7 +393,7 @@ public:
             // 【情况 C: RHS 低阶】 K_new = K_lhs - (K_rhs * scale)
             uint64_t scale = delta_pow(local_delta, offset_rhs);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_rhs = mult_mod(rhs_keys[i], scale);
                 res_keys[i] = add_mod(lhs_keys[i], PR - term_rhs);
@@ -404,7 +404,7 @@ public:
             uint64_t scale_lhs = delta_pow(local_delta, offset_lhs);
             uint64_t scale_rhs = delta_pow(local_delta, offset_rhs);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 uint64_t term_lhs = mult_mod(lhs_keys[i], scale_lhs);
                 uint64_t term_rhs = mult_mod(rhs_keys[i], scale_rhs);
@@ -458,7 +458,7 @@ public:
         uint64_t* res_keys = res.get_keys_ptr();
 
         // 4. 并行乘法
-        #pragma omp parallel for
+        #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             res_keys[i] = mult_mod(lhs_keys[i], rhs_keys[i]);
         }
@@ -507,7 +507,7 @@ public:
             int offset = rhs.degree - lhs.degree;
             uint64_t scale = delta_pow(local_delta, offset);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 // 原地更新： lhs[i] = lhs[i] * scale + rhs[i]
                 uint64_t shifted_lhs = mult_mod(lhs_keys[i], scale);
@@ -526,13 +526,13 @@ public:
 
             if (offset == 0) {
                 // 优化：同阶直接加
-                #pragma omp parallel for
+                #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
                 for (size_t i = 0; i < size; ++i) {
                     lhs_keys[i] = add_mod(lhs_keys[i], rhs_keys[i]);
                 }
             } else {
                 uint64_t scale = delta_pow(local_delta, offset);
-                #pragma omp parallel for
+                #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
                 for (size_t i = 0; i < size; ++i) {
                     uint64_t shifted_rhs = mult_mod(rhs_keys[i], scale);
                     lhs_keys[i] = add_mod(lhs_keys[i], shifted_rhs);
@@ -581,7 +581,7 @@ public:
             int offset = rhs.degree - lhs.degree;
             uint64_t scale = delta_pow(local_delta, offset);
 
-            #pragma omp parallel for
+            #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
             for (size_t i = 0; i < size; ++i) {
                 // 原地更新： lhs[i] = lhs[i] * scale + rhs[i]
                 uint64_t shifted_lhs = mult_mod(lhs_keys[i], scale);
@@ -600,13 +600,13 @@ public:
 
             if (offset == 0) {
                 // 优化：同阶直接加
-                #pragma omp parallel for
+                #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
                 for (size_t i = 0; i < size; ++i) {
                     lhs_keys[i] = add_mod(lhs_keys[i], PR - rhs_keys[i]);
                 }
             } else {
                 uint64_t scale = delta_pow(local_delta, offset);
-                #pragma omp parallel for
+                #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
                 for (size_t i = 0; i < size; ++i) {
                     uint64_t shifted_rhs = mult_mod(rhs_keys[i], scale);
                     lhs_keys[i] = add_mod(lhs_keys[i], PR - shifted_rhs);
@@ -633,7 +633,7 @@ public:
         uint64_t* keys_ptr = lhs.get_keys_ptr();
 
         // 直接更新所有 Key
-        #pragma omp parallel for
+        #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             keys_ptr[i] = mult_mod(keys_ptr[i], val);
         }
@@ -653,7 +653,7 @@ public:
         const uint64_t* rhs_keys = rhs.get_keys_ptr();
 
         // 1. 更新 Keys
-        #pragma omp parallel for
+        #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             lhs_keys[i] = mult_mod(lhs_keys[i], rhs_keys[i]);
         }
@@ -686,7 +686,7 @@ public:
         
         // 2. 并行更新所有 Key
         // K_new = K_old + Shift
-        #pragma omp parallel for
+        #pragma omp parallel for if(size>= MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             keys_ptr[i] = add_mod(keys_ptr[i], shift);
         }
@@ -1074,7 +1074,7 @@ public:
 
             PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
 
-            #pragma omp parallel for collapse(4) schedule(static)
+            #pragma omp parallel for collapse(4) schedule(static) if(M>= MVZK_OMP_SIZE_THRESHOLD)
             for(int n=0; n<N; ++n) {
                 for(int c=0; c<C; ++c) {
                     for(int ho=0; ho<H_out; ++ho) {
@@ -1158,7 +1158,7 @@ public:
 
             PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
 
-            #pragma omp parallel for collapse(4) schedule(static)
+            #pragma omp parallel for collapse(4) schedule(static) if(M>= MVZK_OMP_SIZE_THRESHOLD)
             for(int n=0; n<N; ++n) {
                 for(int c=0; c<C; ++c) {
                     for(int ho=0; ho<H_out; ++ho) {
@@ -1280,7 +1280,7 @@ public:
 
             PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
 
-            #pragma omp parallel for collapse(4) schedule(static)
+            #pragma omp parallel for collapse(4) schedule(static) if(M>= MVZK_OMP_SIZE_THRESHOLD)
             for(int n=0; n<N; ++n) {
                 for(int c=0; c<C; ++c) {
                     for(int ho=0; ho<H_out; ++ho) {
@@ -1612,7 +1612,7 @@ public:
         uint64_t local_delta = (uint64_t)this->delta;
 
         // 6. 并行计算 Key (Parallel Compute)
-        #pragma omp parallel for
+        #pragma omp parallel for if (size>=MVZK_OMP_SIZE_THRESHOLD)
         for (size_t i = 0; i < size; ++i) {
             // 提取 Key (LOW64)
             uint64_t K = (uint64_t)LOW64(vole_returned[i]);
@@ -1928,7 +1928,7 @@ protected:
             std::vector<uint64_t> chi_vec(len);
             this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
 
-            #pragma omp parallel for
+            #pragma omp parallel for if (len >= MVZK_OMP_SIZE_THRESHOLD)
             for(size_t i=0; i<len; ++i) {
                 chi_vec[i] = chi_vec[i] % PR; 
             }
