@@ -2744,6 +2744,7 @@ protected:
     }
 
     // --- Helper 2: 处理 PolyTensor (SoA 极致性能版) ---
+    /*
     void accumulate_tensor_buffer(PolyDelta& final_item) override {
         if (check_tensor_buffer.empty()) return;
 
@@ -2789,6 +2790,97 @@ protected:
                 }
 
                 // 加到最终结果的对应阶上
+                final_item.coeffs[d] = add_mod(final_item.coeffs[d], sum_coeff);
+            }
+
+            tensor.is_consumed = true;
+        }
+        check_tensor_buffer.clear();
+    }*/
+
+    // --- Helper 2: 处理 PolyTensor (SoA 极致性能版) ---
+    void accumulate_tensor_buffer(PolyDelta& final_item) override {
+        if (check_tensor_buffer.empty()) return;
+
+        for (auto& tensor : check_tensor_buffer) {
+            size_t len = tensor.total_elements;
+            
+            // 1. 生成随机数 (保持不变)
+            std::vector<uint64_t> chi_vec(len);
+            this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
+
+            // 随机数取模 (并行化，保持不变)
+            #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD)
+            for(size_t i=0; i<len; ++i) {
+                chi_vec[i] = chi_vec[i] % PR; 
+            }
+
+            // 2. 动态扩容 final_item (保持不变)
+            if (final_item.degree < tensor.degree) {
+                final_item.coeffs.resize(tensor.degree + 1, 0);
+                final_item.degree = tensor.degree;
+            }
+
+            // =========================================================
+            // 3. 【Prover核心修改】累加 Real Values (手动并行归约)
+            // =========================================================
+            const uint64_t* real_ptr = tensor.get_real_vals_ptr();
+            uint64_t sum_real = 0;
+
+            if (len >= MVZK_OMP_SIZE_THRESHOLD) {
+                #pragma omp parallel
+                {
+                    uint64_t local_sum = 0; // 每个线程独享的累加器
+                    
+                    // nowait: 线程算完自己的部分后，不需要等其他线程，直接去临界区排队
+                    #pragma omp for nowait
+                    for (size_t i = 0; i < len; ++i) {
+                        uint64_t term = mult_mod(real_ptr[i], chi_vec[i]);
+                        local_sum = add_mod(local_sum, term);
+                    }
+
+                    // 临界区：安全地汇总到全局变量
+                    #pragma omp critical
+                    {
+                        sum_real = add_mod(sum_real, local_sum);
+                    }
+                }
+            } else {
+                // 小数据串行处理
+                for (size_t i = 0; i < len; ++i) {
+                    uint64_t term = mult_mod(real_ptr[i], chi_vec[i]);
+                    sum_real = add_mod(sum_real, term);
+                }
+            }
+            final_item.real_val = add_mod(final_item.real_val, sum_real);
+
+            // =========================================================
+            // 4. 【Prover核心修改】累加 Coefficients (同样应用并行归约)
+            // =========================================================
+            for (int d = 0; d <= tensor.degree; ++d) {
+                const uint64_t* coeff_ptr = tensor.get_coeffs_ptr(d);
+                uint64_t sum_coeff = 0;
+
+                if (len >= MVZK_OMP_SIZE_THRESHOLD) {
+                    #pragma omp parallel
+                    {
+                        uint64_t local_sum = 0;
+                        #pragma omp for nowait
+                        for (size_t i = 0; i < len; ++i) {
+                            uint64_t term = mult_mod(coeff_ptr[i], chi_vec[i]);
+                            local_sum = add_mod(local_sum, term);
+                        }
+                        #pragma omp critical
+                        {
+                            sum_coeff = add_mod(sum_coeff, local_sum);
+                        }
+                    }
+                } else {
+                    for (size_t i = 0; i < len; ++i) {
+                        uint64_t term = mult_mod(coeff_ptr[i], chi_vec[i]);
+                        sum_coeff = add_mod(sum_coeff, term);
+                    }
+                }
                 final_item.coeffs[d] = add_mod(final_item.coeffs[d], sum_coeff);
             }
 

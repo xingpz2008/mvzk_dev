@@ -733,6 +733,7 @@ inline std::vector<uint64_t> real2fp_ndim(const std::vector<T>& input) {
 // ==========================================
 
 // [基础乘法器]：双层 for 循环，作为递归终点
+/*
 inline void base_mul_core(
     const uint64_t* __restrict__ A, int dA, 
     const uint64_t* __restrict__ B, int dB, 
@@ -768,6 +769,69 @@ inline void base_mul_core(
         }
     } else {
         //#pragma omp parallel for if(dRes >= MVZK_OMP_DEGREE_THRESHOLD)
+        for (int k = 0; k <= dRes; ++k) {
+            uint64_t* res_ptr = Res + k * size;
+            int start_i = std::max(0, k - dB);
+            int end_i = std::min(dA, k);
+
+            for (size_t idx = 0; idx < size; ++idx) {
+                uint64_t sum = 0;
+                for (int i = start_i; i <= end_i; ++i) {
+                    int j = k - i;
+                    uint64_t term = mult_mod(A[i * size + idx], B[j * size + idx]);
+                    sum = add_mod(sum, term);
+                }
+                res_ptr[idx] = sum;
+            }
+        }
+    }
+}*/
+
+inline void base_mul_core(
+    const uint64_t* __restrict__ A, int dA, 
+    const uint64_t* __restrict__ B, int dB, 
+    uint64_t* __restrict__ Res, size_t size) 
+{
+    int dRes = dA + dB;
+    size_t total_ops = (size_t)(dRes + 1) * size;
+    
+    // 1. 初始化 Res 数组为 0 (保持原逻辑)
+    if (total_ops >= MVZK_OMP_SIZE_THRESHOLD) {
+        #pragma omp parallel for
+        for (size_t i = 0; i < total_ops; ++i) Res[i] = 0;
+    } else {
+        std::memset(Res, 0, total_ops * sizeof(uint64_t));
+    }
+
+    // 2. 核心计算优化：将 OpenMP 并行域外提
+    if (size >= MVZK_OMP_SIZE_THRESHOLD) {
+        // 【关键修改】开启一次并行域，所有线程在此待命，不再反复创建销毁
+        #pragma omp parallel 
+        {
+            // 所有线程共享外层 k 的循环逻辑
+            for (int k = 0; k <= dRes; ++k) {
+                uint64_t* res_ptr = Res + k * size;
+                int start_i = std::max(0, k - dB);
+                int end_i = std::min(dA, k);
+
+                // 【关键修改】使用 #pragma omp for 分配任务
+                // 注意：这里保留了隐式 Barrier（即没有加 nowait），
+                // 确保所有线程算完第 k 阶后，再一起进入第 k+1 阶，保证依赖安全（虽然此处无依赖，但为了逻辑清晰）
+                #pragma omp for 
+                for (size_t idx = 0; idx < size; ++idx) {
+                    uint64_t sum = 0;
+                    for (int i = start_i; i <= end_i; ++i) {
+                        int j = k - i;
+                        // 注意：此处指针偏移量计算由编译器优化，直接访问
+                        uint64_t term = mult_mod(A[i * size + idx], B[j * size + idx]);
+                        sum = add_mod(sum, term);
+                    }
+                    res_ptr[idx] = sum;
+                }
+            }
+        }
+    } else {
+        // 串行版本 (处理小规模数据)
         for (int k = 0; k <= dRes; ++k) {
             uint64_t* res_ptr = Res + k * size;
             int start_i = std::max(0, k - dB);

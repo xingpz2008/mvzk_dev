@@ -1925,6 +1925,62 @@ protected:
 
         for (auto& tensor : check_tensor_buffer) {
             size_t len = tensor.total_elements;
+            
+            // 1. 生成随机数
+            std::vector<uint64_t> chi_vec(len);
+            this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
+
+            #pragma omp parallel for if (len >= MVZK_OMP_SIZE_THRESHOLD)
+            for(size_t i=0; i<len; ++i) {
+                chi_vec[i] = chi_vec[i] % PR; 
+            }
+
+            // 更新 final_item 的阶数
+            final_item.degree = std::max(final_item.degree, tensor.degree);
+
+            // =========================================================
+            // 2. 【Verifier核心修改】累加 Keys (手动并行归约)
+            // =========================================================
+            // 注意：Verifier 处理的是 Key
+            const uint64_t* key_ptr = tensor.get_keys_ptr();
+            uint64_t sum_key = 0;
+
+            if (len >= MVZK_OMP_SIZE_THRESHOLD) {
+                #pragma omp parallel
+                {
+                    uint64_t local_sum = 0; // 线程私有变量
+                    
+                    #pragma omp for nowait
+                    for (size_t i = 0; i < len; ++i) {
+                        uint64_t term = mult_mod(key_ptr[i], chi_vec[i]);
+                        local_sum = add_mod(local_sum, term);
+                    }
+
+                    #pragma omp critical
+                    {
+                        sum_key = add_mod(sum_key, local_sum);
+                    }
+                }
+            } else {
+                // 串行
+                for (size_t i = 0; i < len; ++i) {
+                    uint64_t term = mult_mod(key_ptr[i], chi_vec[i]);
+                    sum_key = add_mod(sum_key, term);
+                }
+            }
+
+            final_item.key = add_mod(final_item.key, sum_key);
+            tensor.is_consumed = true;
+        }
+        check_tensor_buffer.clear();
+    }
+    
+    /*
+    void accumulate_tensor_buffer(PolyDelta& final_item) override {
+        if (check_tensor_buffer.empty()) return;
+
+        for (auto& tensor : check_tensor_buffer) {
+            size_t len = tensor.total_elements;
             std::vector<uint64_t> chi_vec(len);
             this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
 
@@ -1950,7 +2006,7 @@ protected:
             tensor.is_consumed = true;
         }
         check_tensor_buffer.clear();
-    }
+    }*/
 
     // =========================================================
     // 5. LUT Section
