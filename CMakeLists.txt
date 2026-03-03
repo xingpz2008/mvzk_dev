@@ -38,10 +38,10 @@ endif()
 
 # 通用 Flag (架构相关)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-    set(ARCH_FLAGS "-Wno-ignored-attributes -Wno-unused-result")
+    set(ARCH_FLAGS -Wno-ignored-attributes -Wno-unused-result)
 else()
     # 针对 AWS Intel 芯片的极限配置 (-unroll-loops 展开循环进一步压榨流水线)
-    set(ARCH_FLAGS "-maes -msse4.1 -mpclmul -march=native -funroll-loops -Wno-ignored-attributes -Wno-unused-result")
+    set(ARCH_FLAGS -maes -msse4.1 -mpclmul -march=native -funroll-loops -Wno-ignored-attributes -Wno-unused-result)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

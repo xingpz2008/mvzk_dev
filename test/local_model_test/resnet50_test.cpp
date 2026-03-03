@@ -130,7 +130,7 @@ ResNet50Weights resnet50(MVZKExec* exec, int party) {
 // 主函数：极其优雅的用户侧体验
 // ==========================================
 int main(int argc, char** argv) {
-    SetLogLevel(LEVEL_ERROR);
+    SetLogLevel(LEVEL_WARN);
     if (argc < 6) {
         cout << "Usage: " << argv[0] << " <party> <port> <N> <H> <W>" << endl;
         return 1;
@@ -149,8 +149,16 @@ int main(int argc, char** argv) {
     cout << "Role: " << (party == PARTY_PROVER ? "PROVER" : "VERIFIER") << endl;
     cout << "=================================================" << endl;
 
+    /*
     NetIO *io = new NetIO(party == PARTY_PROVER ? nullptr : "127.0.0.1", port);
-    NetIO *io_arr[1] = {io};
+    NetIO *io_arr[1] = {io};*/
+
+    int num_threads = MVZK_CONFIG_THREADS_NUM;
+    NetIO **io_arr = new NetIO*[num_threads];
+    for (int i = 0; i < num_threads; ++i) {
+        // 每个线程分配一个专属的连续端口 (port, port+1, port+2...)
+        io_arr[i] = new NetIO(party == PARTY_PROVER ? nullptr : "127.0.0.1", port + i);
+    }
 
     MVZKExec *exec = nullptr;
     if (party == PARTY_PROVER) exec = new MVZKExecProver<NetIO>(io_arr);
@@ -210,6 +218,6 @@ int main(int argc, char** argv) {
     }
 
     if(exec) delete exec;
-    delete io;
+    delete io_arr;
     return 0;
 }
