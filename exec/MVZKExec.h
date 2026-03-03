@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
-#include "../../emp-vole/utility.h"
+#include "emp-zk/emp-vole/utility.h"
 #include "../utility.h"
 
 class PolyDelta; 

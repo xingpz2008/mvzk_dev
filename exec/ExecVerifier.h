@@ -1,14 +1,14 @@
 #ifndef MVZK_EXECUTION_VERIFIER_H__
 #define MVZK_EXECUTION_VERIFIER_H__
 
-#include "emp-zk/emp-mvzk/exec/MVZKExec.h"
+#include "MVZKExec.h"
 #include "emp-zk/emp-zk-arith/ostriple.h"
 #include "emp-zk/emp-vole/emp-vole.h"
 #include "emp-zk/emp-vole/vole_triple.h"
-#include "emp-zk/emp-mvzk/config.h"
-#include "emp-zk/emp-mvzk/data_type/PolyDelta.h"
-#include "emp-zk/emp-mvzk/data_type/PolyTensor.h"
-#include "emp-zk/emp-mvzk/utility.h"
+#include "../config.h"
+#include "../data_type/PolyDelta.h"
+#include "../data_type/PolyTensor.h"
+#include "../utility.h"
 #include "emp-tool/utils/hash.h"
 #include <omp.h>
 

@@ -4,7 +4,7 @@
 #include <vector>
 #include <utility>
 #include <cstdint>
-#include "emp-zk/emp-mvzk/data_type/PolyTensor.h"
+#include "../data_type/PolyTensor.h"
 
 class MVZKExec;
 

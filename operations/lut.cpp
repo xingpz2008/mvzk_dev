@@ -1,5 +1,5 @@
 #include "lut.h"
-#include "emp-zk/emp-mvzk/exec/MVZKExec.h"
+#include "../exec/MVZKExec.h"
 
 PublicTable::PublicTable(const std::vector<std::pair<uint64_t, uint64_t>>& table_data) {
     if (MVZKExec::mvzk_exec) {
