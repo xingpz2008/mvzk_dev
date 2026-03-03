@@ -169,6 +169,9 @@ int main(int argc, char** argv) {
         if (m > 0 || h > 0) cout << m << "m ";
         if (s > 0 || m > 0 || h > 0) cout << s << "s ";
         cout << ms << "ms" << endl;
+
+        exec->print_profiler_report();
+
         cout << "=================================================\n" << endl;
         cout << "\033[32m[SUCCESS] VGG-16 Test Passed Beautifully!\033[0m" << endl;
 
