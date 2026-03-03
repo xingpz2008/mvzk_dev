@@ -130,7 +130,7 @@ ResNet50Weights resnet50(MVZKExec* exec, int party) {
 // 主函数：极其优雅的用户侧体验
 // ==========================================
 int main(int argc, char** argv) {
-    SetLogLevel(LEVEL_WARN);
+    SetLogLevel(LEVEL_ERROR);
     if (argc < 6) {
         cout << "Usage: " << argv[0] << " <party> <port> <N> <H> <W>" << endl;
         return 1;

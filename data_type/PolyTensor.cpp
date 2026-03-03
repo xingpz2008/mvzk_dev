@@ -323,3 +323,50 @@ void PolyTensor::store_self_relation(const PolyTensor& lhs, const std::string& t
     lhs.mark_consumed();
     MVZKExec::mvzk_exec->submit_non_zero_tensor_to_buffer(lhs);
 }
+
+
+// ==========================================
+// Shape Manipulation
+// ==========================================
+
+PolyTensor PolyTensor::flatten() const {
+    if (this->shape.size() < 2) return this->clone();
+
+    // 1. 获取 Batch Size (第 0 维)
+    int batch_size = this->shape[0];
+
+    // 2. 计算剩余维度的乘积 (C * H * W)
+    size_t flattened_dim = 1;
+    for (size_t i = 1; i < this->shape.size(); ++i) {
+        flattened_dim *= (size_t)this->shape[i];
+    }
+
+    // 3. 克隆当前张量 (深拷贝数据)
+    PolyTensor res = this->clone(); 
+
+    // 4. 修改新张量的 Shape
+    res.shape.clear();
+    res.shape.push_back(batch_size);
+    res.shape.push_back((int)flattened_dim);
+
+    // 5. 标记原张量已消耗
+    this->is_consumed = true;
+
+    return res;
+}
+
+PolyTensor PolyTensor::reshape(const std::vector<int>& new_shape) const {
+    size_t old_count = this->total_elements;
+    size_t new_count = 1;
+    for(int s : new_shape) new_count *= (size_t)s;
+
+    if (old_count != new_count) {
+        LOG_ERROR("Reshape size mismatch! Old: " << old_count << ", New: " << new_count);
+        exit(-1);
+    }
+
+    PolyTensor res = this->clone();
+    res.shape = new_shape;
+    this->is_consumed = true;
+    return res;
+}

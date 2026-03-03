@@ -114,6 +114,8 @@ PolyTensor VGG16_Forward(
     // 注意: VGG 经过 5 次池化后，224x224 的图像正好变成 7x7。
     // 在 PyTorch 中这里通常还有一个 AdaptiveAvgPool，但传统 VGG 就是直接 Flatten 进 FC 层。
     // 假设你的 Linear 内部自带 Flatten 逻辑：
+    x = x.flatten();
+
     x = Linear(x, net.fc1_w, net.fc1_b);
     x = ReLU(x, bitlen, digdec_k, do_truncation);
 

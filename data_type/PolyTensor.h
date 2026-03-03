@@ -131,6 +131,10 @@ public:
     static void store_self_relation(const PolyTensor& lhs, const std::string& tag = "Unknown");
     //static void store_relation(const PolyTensor& lhs, const std::vector<uint64_t> rhs);
 
+    // Shape Manipulation
+    PolyTensor flatten() const;
+    PolyTensor reshape(const std::vector<int>& new_shape) const;
+
     // ==========================================
     // 6. 运算符重载 - In-Place (修改自身)
     // ==========================================
