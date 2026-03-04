@@ -34,40 +34,94 @@ protected:
     // 优化方向：实现专门的 reduce_mul kernel
     std::vector<PolyTensor> split_to_scalars(const PolyTensor& big_tensor) {
         size_t len = big_tensor.total_elements;
-        
-        // 【关键修正 1】预分配并默认初始化 len 个空对象
-        // 这会调用 PolyTensor 的默认构造函数（开销很小）
-        std::vector<PolyTensor> res(len);
-        
-        // 【关键修正 2】确保条件正确
-        #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for(size_t i=0; i<len; ++i) {
-            // 1. 构造 1x1 Tensor
-            PolyTensor t({1}, big_tensor.degree);
+
+        // =========================================================
+        // Path A: 串行极速路径 (针对小 Tensor)
+        // =========================================================
+        // 阈值设为 8192 (经验值)。
+        // 如果数据量太小，或者当前已经处于并行区域内 (避免嵌套并行)，则直接串行处理。
+        // 这能彻底消除 perf 中看到的 libgomp 调度开销。
+        if (len < MVZK_OMP_SIZE_THRESHOLD * 2 || omp_in_parallel()) {
+            std::vector<PolyTensor> res;
+            res.reserve(len);
             
-            // 2. Copy Real Val
-            if (!big_tensor.flat_real_vals.empty()) {
-                t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
-            }
-            
-            // 3. Copy Coeffs
-            if (!big_tensor.flat_coeffs.empty()) {
-                for(int d=0; d <= big_tensor.degree; ++d) {
-                    t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
+            for(size_t i = 0; i < len; ++i) {
+                // 直接在 vector 尾部构造，无锁，无开销
+                res.emplace_back(std::vector<int>{1}, big_tensor.degree);
+                PolyTensor& t = res.back();
+
+                // Copy Real Val
+                if (!big_tensor.flat_real_vals.empty()) {
+                    t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
                 }
-            }
+                
+                // Copy Coeffs
+                if (!big_tensor.flat_coeffs.empty()) {
+                    for(int d = 0; d <= big_tensor.degree; ++d) {
+                        t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
+                    }
+                }
 
-            // 4. Copy Keys
-            if(!big_tensor.flat_keys.empty()) {
-                t.flat_keys[0] = big_tensor.flat_keys[i];
-            }
+                // Copy Keys
+                if(!big_tensor.flat_keys.empty()) {
+                    t.flat_keys[0] = big_tensor.flat_keys[i];
+                }
 
-            t.is_consumed = false;
+                t.is_consumed = false;
+            }
             
-            // 【关键修正 3】使用索引赋值 (Thread-Safe)
-            // 此时 res[i] 已经存在，我们直接 overwrite 它。
-            // 使用 std::move 避免深拷贝
-            res[i] = std::move(t);
+            big_tensor.is_consumed = true;
+            return res;
+        }
+
+        // =========================================================
+        // Path B: 并行 TLS 路径 (针对大 Tensor)
+        // =========================================================
+        // 只有当任务足够重时，才付出启动线程的代价
+        
+        int max_threads = omp_get_max_threads();
+        // 这里的 vector 初始化开销相比于下面的计算可以忽略不计
+        std::vector<std::vector<PolyTensor>> thread_buffers(max_threads);
+
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            auto& local_res = thread_buffers[tid];
+            
+            // 预估容量：避免 resize 带来的多次内存搬运
+            local_res.reserve(len / max_threads + 16); 
+
+            // 使用 nowait 移除隐式同步，各跑各的，最大化吞吐
+            #pragma omp for schedule(static) nowait
+            for(size_t i = 0; i < len; ++i) {
+                local_res.emplace_back(std::vector<int>{1}, big_tensor.degree);
+                PolyTensor& t = local_res.back(); 
+
+                // --- 拷贝逻辑 (与串行路径一致) ---
+                if (!big_tensor.flat_real_vals.empty()) {
+                    t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
+                }
+                if (!big_tensor.flat_coeffs.empty()) {
+                    for(int d = 0; d <= big_tensor.degree; ++d) {
+                        t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
+                    }
+                }
+                if(!big_tensor.flat_keys.empty()) {
+                    t.flat_keys[0] = big_tensor.flat_keys[i];
+                }
+                t.is_consumed = false;
+            }
+        }
+
+        // 3. 结果合并 (Merge)
+        // 使用 Move Semantics，只拷贝指针，极快
+        std::vector<PolyTensor> res;
+        res.reserve(len);
+        
+        for(auto& buf : thread_buffers) {
+            res.insert(res.end(), 
+                       std::make_move_iterator(buf.begin()), 
+                       std::make_move_iterator(buf.end()));
         }
 
         big_tensor.is_consumed = true;

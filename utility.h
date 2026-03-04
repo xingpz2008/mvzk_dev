@@ -309,7 +309,7 @@ inline PolyTensor fast_tree_product(std::vector<PolyTensor>& items) {
         // 【关键 2】并行计算 (无冲突)
         // 读: current_layer (只读)
         // 写: next_layer (只写，且每个线程写不同的 i)
-        #pragma omp parallel for if(current_size >= MVZK_CONFIG_OMP_FAST_TREE_PRODUCT_SIZE_THRESHOLD && !omp_in_parallel())
+        #pragma omp parallel for schedule(guided) if(current_size >= MVZK_CONFIG_OMP_FAST_TREE_PRODUCT_SIZE_THRESHOLD && !omp_in_parallel())
         for (size_t i = 0; i < current_size / 2; ++i) {
             // current_layer[...] 的 is_consumed 会在 mul 内部被置为 true
             // 结果直接 Move 给 next_layer[i]
