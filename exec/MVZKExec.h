@@ -34,37 +34,42 @@ protected:
     // 优化方向：实现专门的 reduce_mul kernel
     std::vector<PolyTensor> split_to_scalars(const PolyTensor& big_tensor) {
         size_t len = big_tensor.total_elements;
-        std::vector<PolyTensor> res;
-        res.reserve(len);
         
+        // 【关键修正 1】预分配并默认初始化 len 个空对象
+        // 这会调用 PolyTensor 的默认构造函数（开销很小）
+        std::vector<PolyTensor> res(len);
+        
+        // 【关键修正 2】确保条件正确
         #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
         for(size_t i=0; i<len; ++i) {
-            // 1. 构造 1x1 Tensor，保持相同的 Degree
+            // 1. 构造 1x1 Tensor
             PolyTensor t({1}, big_tensor.degree);
             
-            // 2. Copy Real Val (Prover/Verifier 通用)
-            t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
+            // 2. Copy Real Val
+            if (!big_tensor.flat_real_vals.empty()) {
+                t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
+            }
             
-            // 3. Copy Coeffs (Prover Only) - 随 Degree 变化
-            // Layout: [Deg0...][Deg1...]
-            for(int d=0; d <= big_tensor.degree; ++d) {
-                t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
+            // 3. Copy Coeffs
+            if (!big_tensor.flat_coeffs.empty()) {
+                for(int d=0; d <= big_tensor.degree; ++d) {
+                    t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
+                }
             }
 
-            // 4. Copy Keys (Verifier Only) - 【关键修正】
-            // Keys 永远只有一层，不随 Degree 膨胀
+            // 4. Copy Keys
             if(!big_tensor.flat_keys.empty()) {
-                // t 是 1x1 的，所以 t.flat_keys 只有 t.flat_keys[0]
-                // big_tensor 是 Nx1 的，第 i 个元素的 key 就在 flat_keys[i]
                 t.flat_keys[0] = big_tensor.flat_keys[i];
             }
 
-            // 标记为活跃，防止被误判为 dangling
             t.is_consumed = false;
-            res.push_back(std::move(t));
+            
+            // 【关键修正 3】使用索引赋值 (Thread-Safe)
+            // 此时 res[i] 已经存在，我们直接 overwrite 它。
+            // 使用 std::move 避免深拷贝
+            res[i] = std::move(t);
         }
 
-        // We here set big_tensor as consumed. It is safe becuz if the program ends now, the split values will remain active.
         big_tensor.is_consumed = true;
         return res;
     }

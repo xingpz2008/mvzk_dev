@@ -3367,7 +3367,7 @@ protected:
         // Phase 5: Check Zero
         PolyTensor Z = P_LHS - (P_RHS_Write * P_Init_Scalar);
         Z.is_constraint = true;
-        this->submit_tensor_to_buffer(std::move(Z));
+        
 
         // Phase 6: Cleanup (优化)
         table->buffer.clear();
@@ -3376,6 +3376,7 @@ protected:
         // 【修改】快速清零 vector，比 map 遍历删除快得多
         // std::fill 或者 memset 都可以
         std::fill(table->version_tracker.begin(), table->version_tracker.end(), 0);
+        this->submit_tensor_to_buffer(std::move(Z));
     }
 };
 
