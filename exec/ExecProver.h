@@ -3126,6 +3126,10 @@ protected:
     }
 
     int register_range_check_table(const std::vector<uint64_t>& data) override {
+        if (data[0] != real2fp(0)){
+            LOG_ERROR("Not implemented: Range Table must start from 0 in F_p, range check with offset is not implemented currently.");
+            exit(-1);
+        }
         size_t new_hash = compute_vector_hash(data);
 
         // Step 2: 遍历现有的表，寻找是否存在一样的
@@ -3151,9 +3155,11 @@ protected:
             }
         }
         auto entry = std::make_unique<RangeCheckData>(data);
+        /*
         for (const auto& kv : data) {
             entry->version_tracker[kv] = 0;
-        }
+        }*/
+
         range_check_tables.push_back(std::move(entry));
         return (int)range_check_tables.size() - 1;
     }
@@ -3218,25 +3224,28 @@ protected:
         }
 
         RangeCheckData* table = range_check_tables[table_id].get();
-
-        size_t len = x.total_elements;
-        size_t offset = 0; // 切片游标
         size_t threshold = MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD;
+        
+        // 【优化】获取 Tracker 的裸指针，避免 vector 边界检查开销
+        uint64_t* tracker_ptr = table->version_tracker.data();
+        size_t tracker_size = table->version_tracker.size();
 
-        // 【核心修复】：循环切片，大张量自动被切分为多个符合 Threshold 的小张量
+        // 【优化】获取 Input 的裸指针
+        const uint64_t* x_ptr = x.get_real_vals_ptr();
+        size_t len = x.total_elements;
+        
+        size_t offset = 0;
+
+        // 循环切片逻辑 (保持你的逻辑，但优化内部实现)
         while (offset < len) {
-            // 计算当前这一刀可以切多大
             size_t capacity = threshold - table->current_buffer_size;
             size_t current_chunk = std::min(capacity, len - offset);
 
-            // 1. 构造切片子张量
+            // 1. 构造子张量 (保持不变)
             PolyTensor sub_x({(int)current_chunk}, x.degree);
-            
-            // 拷贝 Real Values
             if (!x.flat_real_vals.empty()) {
-                std::memcpy(sub_x.get_real_vals_ptr(), x.get_real_vals_ptr() + offset, current_chunk * sizeof(uint64_t));
+                std::memcpy(sub_x.get_real_vals_ptr(), x_ptr + offset, current_chunk * sizeof(uint64_t));
             }
-            // 拷贝 Coefficients (每阶单独拷贝)
             if (!x.flat_coeffs.empty()) {
                 for (int d = 0; d <= x.degree; ++d) {
                     std::memcpy(sub_x.get_coeffs_ptr(d), x.get_coeffs_ptr(d) + offset, current_chunk * sizeof(uint64_t));
@@ -3245,144 +3254,106 @@ protected:
 
             // 2. 构造 Request
             RangeCheckData::Request req;
-            
-            // 3. 计算 Hint
             req.v_j_hint.reserve(current_chunk);
+            
+            // 【核心优化】消灭 std::map 查找，改为数组索引
+            // 注意：这里我们假设 x_ptr[i] 的值一定在 [0, tracker_size) 范围内
+            // 对于 8-bit/16-bit 分解，这通常是成立的。
             const uint64_t* chunk_ptr = sub_x.get_real_vals_ptr();
+            
+            // 如果能保证安全性，这里甚至可以手动展开循环
             for(size_t i = 0; i < current_chunk; ++i) {
                 uint64_t item = chunk_ptr[i];
-                req.v_j_hint.push_back(table->version_tracker[item]++);
+                
+                // Debug 模式下可以开这个检查
+                #ifndef NDEBUG
+                if (item >= tracker_size) {
+                    LOG_ERROR("Range Check Value OOB! Val: " << item << " Size: " << tracker_size);
+                    exit(-1);
+                }
+                #endif
+
+                // O(1) 访问 + 自增
+                req.v_j_hint.push_back(tracker_ptr[item]++);
             }
 
-            req.vals = std::move(sub_x); // 移交子张量所有权
-
-            // 4. 入队
+            req.vals = std::move(sub_x); 
             table->buffer.push_back(std::move(req));
             table->current_buffer_size += current_chunk;
 
-            // 5. 触达阈值，立刻 Flush！
             if (table->current_buffer_size >= threshold) {
-                //WHITE("[INFO] Range check buffer full. Instant submit now.");
                 process_range_check_batch(table); 
             }
-
-            // 游标前进
             offset += current_chunk;
         }
-
         x.is_consumed = true;
     }
 
     void process_range_check_batch(RangeCheckData* table) override {
-        // 0. 空检查
         if (table->buffer.empty()) return;
 
         size_t N_Query = table->current_buffer_size;
-        size_t N_Table = table->data.size();
+        size_t N_Table = table->data.size(); // 注意：这里 data.size() == version_tracker.size()
 
-        // =========================================================
-        // Phase 1: Serialization & Commit (Prover 独有逻辑)
-        // =========================================================
-        
-        // 1.1 准备 Hint (Query 时的版本号)
+        // Phase 1.1: Hint (保持不变)
         std::vector<uint64_t> hints_flat;
         hints_flat.reserve(N_Query);
         for (const auto& req : table->buffer) {
             hints_flat.insert(hints_flat.end(), req.v_j_hint.begin(), req.v_j_hint.end());
         }
 
-        // 1.2 准备 Final Version (表的最终状态)
-        // 【安全核心】：必须遍历 table->data，不能遍历 version_tracker！
-        // 这样确保了任何不在原始表里的非法 Key 无法进入 Final 集合
+        // Phase 1.2: Final Version (优化遍历)
+        // 【修改】直接拷贝 vector，不用 map 迭代器
+        // 这一步可以用 memcpy 或者 assign 进一步加速，但循环也足够快了
+        // 逻辑：table->data 是 [0, 1, ..., N-1]，对应 version_tracker 的下标
+        // 所以我们只需要把 version_tracker 里的值拷出来就行
+        // 注意：这里假设 table->data 是顺序的 0..N-1。如果不是，需要用索引
+        // 为了通用性，我们还是遍历 table->data，用它的值作为下标去取 tracker
         std::vector<uint64_t> finals_flat;
         finals_flat.reserve(N_Table);
+        
+        const uint64_t* tracker_ptr = table->version_tracker.data();
         for (const auto& kv : table->data) {
-            // 利用 map 特性：如果之前没查过，tracker[key] 自动返回 0 (正确)
-            finals_flat.push_back(table->version_tracker[kv]);
+            // O(1) 取值
+            finals_flat.push_back(tracker_ptr[kv]);
         }
 
-        // 1.3 VOLE 提交 (网络交互)
+        // Phase 1.3: VOLE (保持不变)
         PolyTensor V_J = this->input({(int)N_Query, 1}, hints_flat);
         PolyTensor V_FINAL = this->input({(int)N_Table, 1}, finals_flat);
-        // TODO: Set to one round send
 
-        //debug_print(V_J, "V_j");
-        //debug_print(V_FINAL, "V_Final");
-
-        // =========================================================
-        // Phase 2: Challenge (Prover 接收随机数)
-        // =========================================================
+        // Phase 2: Challenge (保持不变)
         block seed;
         io->recv_data(&seed, sizeof(block));
         this->prg.reseed(&seed);
-
         uint64_t sy, sv, r;
-        //this->prg.random_data(&sx, sizeof(uint64_t));
         this->prg.random_data(&sy, sizeof(uint64_t));
         this->prg.random_data(&sv, sizeof(uint64_t));
         this->prg.random_data(&r, sizeof(uint64_t));
-        //sx = sx % PR;
-        sy = sy % PR;
-        sv = sv % PR;
-        r = r % PR;
+        sy = sy % PR; sv = sv % PR; r = r % PR;
 
-        // =========================================================
-        // Phase 3: RLC & Term Construction
-        // =========================================================
-
-        // 3.1 拼接 Buffer (AoS -> SoA)
-
+        // Phase 3: RLC (保持不变)
         auto Big_Vals = concat_buffer_tensors(table);
-
-        //debug_print(Big_Vals, "Big_Vals");
-
-        // 3.2 计算 Query Read 项
-        // Term_Read = K*sx + V*sy + v*sv - r
         PolyTensor Term_Q_Read = (Big_Vals * sy) + (V_J * sv) - r;
-        
-        //debug_instant_check(Term_Q_Read);
-
-        // 3.3 计算 Query Write 项 (隐式推导)
-        // Term_Write = Term_Read + sv (即 v -> v+1)
         PolyTensor Term_Q_Write = Term_Q_Read + sv;
 
-        //debug_instant_check(Term_Q_Write);
-
-        // 3.4 计算 Final 项 和 Init 标量 (遍历 table->data)
         std::vector<uint64_t> table_consts;
         table_consts.reserve(N_Table);
-        uint64_t P_Init_Scalar = 1; // 标量累乘器 (u64)
+        uint64_t P_Init_Scalar = 1;
 
         for (const auto& kv : table->data) {
-            // Process write const
-            //uint64_t val = kv.second;
-
-            // 计算常数部分: K*sx + V*sy
             uint64_t term_val = mult_mod(kv, sy);
             table_consts.push_back(term_val);
-
-            // Init 项：Version=0，所以直接是 (term_val - r)
-            // 这一步是【安全核心】：只有 data 里有的 Key 才能进入 Init 积
             P_Init_Scalar = mult_mod(P_Init_Scalar, add_mod(term_val, PR - r));
-            //P_Init_Scalar *= (term_val - r);
         }
 
-        // 构造 PolyTensor 形式的 Final 项
-        // Term_Final = (K*sx + V*sy) + v_final*sv - r
         PolyTensor P_Table_Const = PolyTensor::from_public({(int)N_Table, 1}, table_consts);
-        
         PolyTensor Term_Final = P_Table_Const + (V_FINAL * sv) - r;
-        //debug_instant_check(Term_Final);
 
-        // =========================================================
-        // Phase 4: Grand Product (计算 LHS 和 RHS)
-        // =========================================================
-
-        // 4.1 准备 LHS (Read U Final)
-        std::vector<PolyTensor> lhs_list = split_to_scalars(Term_Q_Read);
-        std::vector<PolyTensor> final_list = split_to_scalars(Term_Final);
+        // Phase 4: Grand Product
+        std::vector<PolyTensor> lhs_list = this->split_to_scalars(Term_Q_Read);
+        std::vector<PolyTensor> final_list = this->split_to_scalars(Term_Final);
         
-        // 合并列表，并行计算
         lhs_list.reserve(lhs_list.size() + final_list.size());
         lhs_list.insert(lhs_list.end(), 
                         std::make_move_iterator(final_list.begin()), 
@@ -3390,31 +3361,21 @@ protected:
 
         PolyTensor P_LHS = fast_tree_product(lhs_list);
 
-        // 4.2 准备 RHS (Write Only)
-        std::vector<PolyTensor> rhs_list = split_to_scalars(Term_Q_Write);
+        std::vector<PolyTensor> rhs_list = this->split_to_scalars(Term_Q_Write);
         PolyTensor P_RHS_Write = fast_tree_product(rhs_list);
 
-        // =========================================================
         // Phase 5: Check Zero
-        // =========================================================
-        
-        // Z = LHS - (Write_Product * Init_Scalar)
         PolyTensor Z = P_LHS - (P_RHS_Write * P_Init_Scalar);
         Z.is_constraint = true;
-        
-        //debug_print(Z, "");
+        this->submit_tensor_to_buffer(std::move(Z));
 
-        // =========================================================
-        // Phase 6: Cleanup
-        // =========================================================
+        // Phase 6: Cleanup (优化)
         table->buffer.clear();
         table->current_buffer_size = 0;
 
-        for (auto& pair : table->version_tracker) {
-            pair.second = 0; 
-        }
-
-        this->submit_tensor_to_buffer(std::move(Z));
+        // 【修改】快速清零 vector，比 map 遍历删除快得多
+        // std::fill 或者 memset 都可以
+        std::fill(table->version_tracker.begin(), table->version_tracker.end(), 0);
     }
 };
 

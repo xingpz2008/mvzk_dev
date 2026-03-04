@@ -37,6 +37,7 @@ protected:
         std::vector<PolyTensor> res;
         res.reserve(len);
         
+        #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
         for(size_t i=0; i<len; ++i) {
             // 1. 构造 1x1 Tensor，保持相同的 Degree
             PolyTensor t({1}, big_tensor.degree);
@@ -104,7 +105,11 @@ protected:
         std::vector<uint64_t> data;
         
         // Prover 索引: 记录 (k,v) 当前的版本号
-        std::map<uint64_t, uint64_t> version_tracker;
+        // std::map<uint64_t, uint64_t> version_tracker;
+        // Here we use vector to replace general map.
+        // If the table is not start from zero, considering offset
+        // TODO: Implement offset version tracker for a non-zero range check.
+        std::vector<uint64_t> version_tracker;
 
         // 待处理请求
         struct Request {
@@ -124,6 +129,7 @@ protected:
         RangeCheckData(const std::vector<uint64_t>& _data) 
             : data(_data) {
             data_hash = compute_vector_hash(_data);
+            version_tracker.resize(_data.size(), 0);
         }
     };
 

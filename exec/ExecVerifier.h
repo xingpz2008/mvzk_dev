@@ -2203,7 +2203,15 @@ protected:
         this->submit_tensor_to_buffer(std::move(Z));
     }
 
+    // =========================================================
+    // 1. 注册表 (Verifier 版：优化初始化)
+    // =========================================================
     int register_range_check_table(const std::vector<uint64_t>& data) override {
+        // RangeCheckData 构造函数里已经 resize 了 version_tracker (vector)
+        if (data[0] != real2fp(0)){
+            LOG_ERROR("Not implemented: Range Table must start from 0 in F_p, range check with offset is not implemented currently.");
+            exit(-1);
+        }
         auto entry = std::make_unique<RangeCheckData>(data);
         size_t new_hash = compute_vector_hash(data);
 
@@ -2233,41 +2241,9 @@ protected:
         return (int)range_check_tables.size() - 1;
     }
 
-    /*
-    void submit_range_check(const PolyTensor& x, int table_id) override {
-        // 1. 安全检查
-        if (table_id < 0 || table_id >= range_check_tables.size()) {
-            std::cerr << "[Verifier Error] Invalid Table ID: " << table_id << std::endl;
-            return;
-        }
-
-        RangeCheckData* table = range_check_tables[table_id].get();
-
-        // 2. 准备请求对象
-        RangeCheckData::Request req;
-        req.vals = x.clone();
-
-        // =========================================================
-        // 3. 【Verifier 逻辑】无 Hint
-        // =========================================================
-        // Verifier 不知道 tracker，也没有 tracker 数据。
-        // req.v_j_hint 保持为空即可 (std::vector 默认构造为空)。
-        // 这一步直接跳过。
-
-        // 4. 入队
-        table->buffer.push_back(std::move(req));
-        table->current_buffer_size += x.total_elements;
-        x.is_consumed = true;
-
-        // 5. 阈值检查
-        // Verifier 必须和 Prover 保持同步的 Flush 节奏
-        // 因为 Prover 触发 process_lut_batch 会发网络包，Verifier 必须同时也触发接收
-        if (table->current_buffer_size >= MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD) {
-            process_range_check_batch(table); 
-        }
-    }
-        */
-    
+    // =========================================================
+    // 2. 提交检查 (Verifier 版：优化切片 & 指针操作)
+    // =========================================================
     void submit_range_check(const PolyTensor& x, int table_id) override {
         if (table_id < 0 || table_id >= range_check_tables.size()) {
             LOG_ERROR("Invalid Table ID: " << table_id);
@@ -2279,6 +2255,9 @@ protected:
         size_t len = x.total_elements;
         size_t offset = 0; // 切片游标
         size_t threshold = MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD;
+        
+        // 【优化】获取 Keys 的裸指针，加速拷贝
+        const uint64_t* x_keys_ptr = x.get_keys_ptr();
 
         // 【核心修复】：循环切片
         while (offset < len) {
@@ -2289,19 +2268,23 @@ protected:
             PolyTensor sub_x({(int)current_chunk}, x.degree);
             
             // Verifier 只需要拷贝 Keys (密文)
+            // 使用 memcpy 替代循环，速度更快
             if (!x.flat_keys.empty()) {
-                std::memcpy(sub_x.get_keys_ptr(), x.get_keys_ptr() + offset, current_chunk * sizeof(uint64_t));
+                std::memcpy(sub_x.get_keys_ptr(), x_keys_ptr + offset, current_chunk * sizeof(uint64_t));
             }
 
             // 2. 构造 Request
             RangeCheckData::Request req;
             req.vals = std::move(sub_x); 
+            
+            // Verifier 不需要 v_j_hint，保持为空
 
             // 3. 入队
             table->buffer.push_back(std::move(req));
             table->current_buffer_size += current_chunk;
 
             // 4. 触达阈值，立刻 Flush！
+            // 必须与 Prover 保持同步
             if (table->current_buffer_size >= threshold) {
                 //WHITE("[INFO] Range check buffer full. Instant submit now.");
                 process_range_check_batch(table); 
@@ -2314,6 +2297,9 @@ protected:
         x.is_consumed = true;
     }
 
+    // =========================================================
+    // 3. 批处理 (Verifier 版：优化并行 & 清理)
+    // =========================================================
     void process_range_check_batch(RangeCheckData* table) override {
         // 0. 空检查
         if (table->buffer.empty()) return;
@@ -2328,6 +2314,7 @@ protected:
         // Verifier 不需要提供数据，只需要指定形状来接收 VOLE 扩展
         // 这两个 Tensor 内部存储的是 Key/Delta
         std::vector<uint64_t> null_raw_data;
+        // 注意：Input 函数内部可能会涉及网络接收，这里必须串行
         PolyTensor V_J = this->input({(int)N_Query, 1}, null_raw_data);
         PolyTensor V_FINAL = this->input({(int)N_Table, 1}, null_raw_data);
 
@@ -2358,7 +2345,7 @@ protected:
 
         // 3.1 拼接 Buffer
         // 这里的 Big_Keys/Vals 内部是密文形式 (或者 Verifier 持有的 Key/Delta)
-
+        // concat_buffer_tensors 内部如果是 vector 拷贝，速度很快
         PolyTensor Big_Vals = concat_buffer_tensors(table);
 
         //debug_print(Big_Vals, "Big_Vals");
@@ -2376,6 +2363,7 @@ protected:
 
         // 3.4 计算 Final 项 和 Init 标量
         // 这里的逻辑必须和 Prover 一模一样，因为 table->data 是公开的
+        // data.size() 通常较小 (256/65536)，串行计算即可，不必并行
         std::vector<uint64_t> table_consts;
         table_consts.reserve(N_Table);
         uint64_t P_Init_Scalar = 1;
@@ -2399,18 +2387,20 @@ protected:
         // =========================================================
 
         // 4.1 LHS
-        std::vector<PolyTensor> lhs_list = split_to_scalars(Term_Q_Read);
-        std::vector<PolyTensor> final_list = split_to_scalars(Term_Final);
+        // 【关键】调用并行化的 split_to_scalars
+        std::vector<PolyTensor> lhs_list = this->split_to_scalars(Term_Q_Read);
+        std::vector<PolyTensor> final_list = this->split_to_scalars(Term_Final);
         
         lhs_list.reserve(lhs_list.size() + final_list.size());
         lhs_list.insert(lhs_list.end(), 
                         std::make_move_iterator(final_list.begin()), 
                         std::make_move_iterator(final_list.end()));
         
+        // 并行归约
         PolyTensor P_LHS = fast_tree_product(lhs_list);
 
         // 4.2 RHS
-        std::vector<PolyTensor> rhs_list = split_to_scalars(Term_Q_Write);
+        std::vector<PolyTensor> rhs_list = this->split_to_scalars(Term_Q_Write);
         PolyTensor P_RHS_Write = fast_tree_product(rhs_list);
 
         // =========================================================
@@ -2423,14 +2413,14 @@ protected:
         //debug_print(Z, "");
 
         // =========================================================
-        // Phase 6: Cleanup
+        // Phase 6: Cleanup (优化)
         // =========================================================
         table->buffer.clear();
         table->current_buffer_size = 0;
 
-        for (auto& pair : table->version_tracker) {
-            pair.second = 0; 
-        }
+        // 【优化】快速清零 vector (虽然 Verifier 不怎么用 tracker，但保持状态一致是个好习惯)
+        // 原代码: for (auto& pair : table->version_tracker) pair.second = 0; 
+        std::fill(table->version_tracker.begin(), table->version_tracker.end(), 0);
 
         // Verifier 将 Z 加入到全局验证队列中
         this->submit_tensor_to_buffer(std::move(Z));
