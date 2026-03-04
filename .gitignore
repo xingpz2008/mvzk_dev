@@ -19,6 +19,7 @@ bin/
 # 屏蔽可能生成的临时测试数据
 *.bin
 *.dat
+*.log
 
 /test/dev_test
 TODO
