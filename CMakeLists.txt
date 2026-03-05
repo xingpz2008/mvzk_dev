@@ -49,7 +49,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(${ARCH_FLAGS} -O0 -g -ggdb -fno-inline)
 else()
     message(STATUS "Build type: RELEASE (Optimizations ON + LTO)")
-    add_compile_options(${ARCH_FLAGS} -O3)
+    add_compile_options(${ARCH_FLAGS} -O3 -g -fno-omit-frame-pointer)
     
     # 开启 LTO 链接期优化 (神级性能开关)
     include(CheckIPOSupported)
