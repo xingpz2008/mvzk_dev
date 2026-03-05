@@ -1,13 +1,10 @@
 /*
  * Usage: 
- * ./resnet50_test <party> <port> <N> <H> <W>
+ * ./resnet101_test <party> <port> <N> <H> <W>
  *
- * Example (CIFAR-10, Recommended 32x32 for fast verification):
- * [Prover]   ./resnet50_test 1 12345 1 32 32
- * [Verifier] ./resnet50_test 2 12345 1 32 32
- * * Example (ImageNet):
- * [Prover]   ./resnet50_test 1 12345 1 224 224
- * [Verifier] ./resnet50_test 2 12345 1 224 224
+ * Example (ImageNet):
+ * [Prover]   ./resnet101_test 1 12345 1 224 224
+ * [Verifier] ./resnet101_test 2 12345 1 224 224
  */
 
 #include <iostream>
@@ -18,7 +15,7 @@
 #include <fstream>
 #include <sstream>
 #include <ctime>
-#include <omp.h> // <--- 新增：用于获取 OpenMP 线程信息
+#include <omp.h> // 用于获取 OpenMP 线程信息
 #include <cstdlib>
 
 #include "exec/ExecProver.h"
@@ -26,8 +23,8 @@
 #include "utility.h"       
 #include "emp-tool/emp-tool.h"
 
-// 引入你写好的模型结构定义与前向传播逻辑
-#include "local_models/resnet50.h"
+// 引入ResNet-101的定义
+#include "local_models/resnet101.h"
 
 using namespace std;
 using namespace emp;
@@ -60,7 +57,7 @@ PolyTensor create_dummy_tensor(MVZKExec* exec, int party, const vector<int>& sha
     vector<uint64_t> data(total_size, 0);
     if (party == PARTY_PROVER) {
         static mt19937 gen(12345);
-        uniform_int_distribution<int64_t> dis(-5, 5); // 小范围随机数，防止未经 LayerNorm/BN 的 50 层网络直接溢出
+        uniform_int_distribution<int64_t> dis(-5, 5); // 小范围随机数，防止未经 LayerNorm/BN 的深层网络直接溢出
         for (size_t i = 0; i < total_size; ++i) {
             float f_val = static_cast<float>(dis(gen)) / 100.0f;
             data[i] = real2fp(f_val);
@@ -80,7 +77,7 @@ string strip_ansi(const string& input) {
         if (c == '\033') {
             in_escape = true;
         } else if (in_escape) {
-            if (c == 'm') in_escape = false; // 遇到 'm' 结束颜色标记
+            if (c == 'm') in_escape = false; 
         } else {
             output += c;
         }
@@ -88,10 +85,6 @@ string strip_ansi(const string& input) {
     return output;
 }
 
-// 参数中增加了 int omp_threads
-// ==========================================
-// 辅助工具：生成、打印并保存最终测试报告
-// ==========================================
 void print_test_report(const string& model_name, int party, int N, int H, int W, 
                        uint64_t bitlen, uint64_t digdec_k, bool do_truncation, 
                        int num_threads, int omp_threads, uint64_t net_io_counter_start, uint64_t net_io_counter_end, 
@@ -154,22 +147,17 @@ void print_test_report(const string& model_name, int party, int N, int H, int W,
 
     // 4. 打印到终端
     string report_str = oss.str();
-    cout << report_str << endl; // 打印基础信息报告
-    cout << profiler_str;       // 原汁原味打印带颜色的 ZK Constraints Profiler
+    cout << report_str << endl; 
+    cout << profiler_str;       
 
-    // 5. 写入本地文件 (使用传入的统一时间戳)
+    // 5. 写入本地文件
     string role_str = (party == PARTY_PROVER) ? "PROVER" : "VERIFIER";
     
     char time_buf[64];
     strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", localtime(&stop_time_t));
     string safe_time_str(time_buf);
 
-    // ==========================================
-    // 工程化修改：去掉 "../"，改用当前目录下的 "log/"
-    // ==========================================
     string log_dir = "log/"; 
-    
-    // 使用 -p 参数安全创建：存在则忽略，不存在则创建
     system(("mkdir -p " + log_dir).c_str()); 
 
     string filename = log_dir + "report_" + model_name + "_" + role_str + "_" 
@@ -180,7 +168,7 @@ void print_test_report(const string& model_name, int party, int N, int H, int W,
     ofstream outfile(filename);
     if (outfile.is_open()) {
         outfile << report_str;
-        outfile << strip_ansi(profiler_str); // 剥离颜色后写入文件
+        outfile << strip_ansi(profiler_str); 
         outfile.close();
         cout << "[INFO] Report successfully saved to: \033[36m" << filename << "\033[0m" << endl;
     } else {
@@ -192,8 +180,9 @@ void print_test_report(const string& model_name, int party, int N, int H, int W,
 // PyTorch 范式：模型实例化工厂 (Model Builder)
 // ==========================================
 
-BottleneckWeights _make_bottleneck(MVZKExec* exec, int party, int in_channels, int base_channels, bool downsample) {
-    BottleneckWeights bw;
+// 注意：这里换成了 BottleneckWeights101
+BottleneckWeights101 _make_bottleneck(MVZKExec* exec, int party, int in_channels, int base_channels, bool downsample) {
+    BottleneckWeights101 bw;
     int out_channels = base_channels * 4;
 
     bw.conv1_w = create_dummy_tensor(exec, party, {base_channels, in_channels, 1, 1});
@@ -213,8 +202,8 @@ BottleneckWeights _make_bottleneck(MVZKExec* exec, int party, int in_channels, i
     return bw;
 }
 
-vector<BottleneckWeights> _make_layer(MVZKExec* exec, int party, int in_channels, int base_channels, int blocks) {
-    vector<BottleneckWeights> layer;
+vector<BottleneckWeights101> _make_layer(MVZKExec* exec, int party, int in_channels, int base_channels, int blocks) {
+    vector<BottleneckWeights101> layer;
     layer.push_back(_make_bottleneck(exec, party, in_channels, base_channels, true));
     
     int next_in_channels = base_channels * 4;
@@ -224,15 +213,16 @@ vector<BottleneckWeights> _make_layer(MVZKExec* exec, int party, int in_channels
     return layer;
 }
 
-ResNet50Weights resnet50(MVZKExec* exec, int party) {
-    ResNet50Weights model;
+ResNet101Weights resnet101(MVZKExec* exec, int party) {
+    ResNet101Weights model;
     
     model.conv1_w = create_dummy_tensor(exec, party, {64, 3, 7, 7});
     model.conv1_b = create_dummy_tensor(exec, party, {64});
 
     model.layer1 = _make_layer(exec, party, 64,   64,  3); 
     model.layer2 = _make_layer(exec, party, 256,  128, 4); 
-    model.layer3 = _make_layer(exec, party, 512,  256, 6); 
+    // ★ 核心区别：ResNet-101的第三层是23个Block，而不是ResNet-50的6个 ★
+    model.layer3 = _make_layer(exec, party, 512,  256, 23); 
     model.layer4 = _make_layer(exec, party, 1024, 512, 3); 
 
     model.fc_w = create_dummy_tensor(exec, party, {1000, 2048});
@@ -260,7 +250,7 @@ int main(int argc, char** argv) {
     bool do_truncation = MVZK_CONFIG_NON_LINEAR_RELU_DO_TRUNCATION;
 
     cout << "=================================================" << endl;
-    cout << "ResNet-50 Full ZK Graph Test" << endl;
+    cout << "ResNet-101 Full ZK Graph Test" << endl;
     cout << "Role: " << (party == PARTY_PROVER ? "PROVER" : "VERIFIER") << endl;
     cout << "=================================================" << endl;
 
@@ -282,31 +272,32 @@ int main(int argc, char** argv) {
         uint64_t net_io_start = comm(io_arr, num_threads);
         
         // --------------------------------------------------
-        // [起点时刻]：分别获取高精度测速时钟和系统日历时钟
+        // [起点时刻]
         // --------------------------------------------------
-        auto start_zk = high_resolution_clock::now(); // 用于精确测速
+        auto start_zk = high_resolution_clock::now(); 
         
-        time_t start_time_t = system_clock::to_time_t(system_clock::now()); // 用于日志打印
+        time_t start_time_t = system_clock::to_time_t(system_clock::now()); 
         string start_time_str = ctime(&start_time_t);
         start_time_str.pop_back(); 
 
         cout << "[TEST] Loading Dummy Image..." << endl;
         PolyTensor image = create_dummy_tensor(exec, party, {N, 3, H, W});
 
-        cout << "[TEST] Instantiating ResNet-50 Model Weights..." << endl;
-        ResNet50Weights model = resnet50(exec, party);
+        cout << "[TEST] Instantiating ResNet-101 Model Weights..." << endl;
+        ResNet101Weights model = resnet101(exec, party);
 
         PolyTensor output;
         measure_time([&](){
-            output = ResNet50_Forward(image, model, bitlen, digdec_k, do_truncation);
-        }, "ResNet50 Forward Pass Execution");
+            // 调用 ResNet101_Forward
+            output = ResNet101_Forward(image, model, bitlen, digdec_k, do_truncation);
+        }, "ResNet101 Forward Pass Execution");
 
         cout << "[TEST] Output Shape: (" 
              << output.shape[0] << ", " << output.shape[1] << ", " 
              << output.shape[2] << ", " << output.shape[3] << ")" << endl;
 
         cout << "[TEST] Securing final logits via Self-Relation..." << endl;
-        PolyTensor::store_self_relation(output, "ResNet50_Final_Logits_Check");
+        PolyTensor::store_self_relation(output, "ResNet101_Final_Logits_Check");
 
         cout << "\n[TEST] Triggering ZK Constraints Verification..." << endl;
         measure_time([&](){
@@ -314,11 +305,11 @@ int main(int argc, char** argv) {
         }, "Check All MACs and Circuits");
 
         // --------------------------------------------------
-        // [终点时刻]：分别获取高精度测速时钟和系统日历时钟
+        // [终点时刻]
         // --------------------------------------------------
-        auto stop_zk = high_resolution_clock::now(); // 用于精确测速
+        auto stop_zk = high_resolution_clock::now(); 
         
-        time_t stop_time_t = system_clock::to_time_t(system_clock::now()); // 用于日志打印
+        time_t stop_time_t = system_clock::to_time_t(system_clock::now()); 
         string stop_time_str = ctime(&stop_time_t);
         stop_time_str.pop_back(); 
 
@@ -337,9 +328,9 @@ int main(int argc, char** argv) {
         string captured_profiler_str = profiler_buffer.str(); 
 
         // --------------------------------------------------
-        // 输出格式化报告（写入文件 + 终端打印）
+        // 输出格式化报告
         // --------------------------------------------------
-        print_test_report("ResNet50", party, N, H, W, bitlen, digdec_k, do_truncation, 
+        print_test_report("ResNet101", party, N, H, W, bitlen, digdec_k, do_truncation, 
                           num_threads, omp_threads, net_io_start, net_io_end, start_time_str, stop_time_str, 
                           stop_time_t, total_ms, captured_profiler_str);
 
@@ -358,7 +349,7 @@ int main(int argc, char** argv) {
         cout << s << "s " << ms << "ms  (" << total_ms << " ms)\n" << endl;
         cout << "=================================================\n" << endl;
         
-        cout << "\033[32m[SUCCESS] ResNet-50 Test Passed Beautifully!\033[0m" << endl;
+        cout << "\033[32m[SUCCESS] ResNet-101 Test Passed Beautifully!\033[0m" << endl;
 
     } catch (const std::exception& e) {
         cerr << "\n\033[31m[FATAL ERROR] " << e.what() << "\033[0m" << endl;

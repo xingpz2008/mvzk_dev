@@ -131,6 +131,15 @@ inline uint64_t pow_mod(uint64_t a, uint64_t deg) {
     return res;
 }
 
+// Comm Data
+inline uint64_t comm(NetIO** io_arr, int num){
+    uint64_t c = 0;
+    for (int i = 0; i < num; i++){
+        c += io_arr[i]->counter;
+    }
+    return c;
+}
+
 /*
 LOG_WARN("FFT Optimization is recommended, deg = " << final_checked_item.degree);
 LOG_DEBUG("Check buffer threshold reached, instant check now."); // 这种频繁触发的建议放 DEBUG

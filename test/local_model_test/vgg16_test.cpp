@@ -8,6 +8,11 @@
 #include <chrono>
 #include <random>
 #include <iomanip>
+#include <fstream>
+#include <sstream>
+#include <ctime>
+#include <omp.h> // 用于获取 OpenMP 线程信息
+#include <cstdlib>
 
 #include "exec/ExecProver.h"
 #include "exec/ExecVerifier.h"
@@ -26,6 +31,19 @@ const int PARTY_PROVER = ALICE;
 const int PARTY_VERIFIER = BOB;
 
 // ==========================================
+// 辅助工具：时间测量
+// ==========================================
+template <typename Func>
+long long measure_time(Func&& func, string step_name) {
+    auto start = high_resolution_clock::now();
+    func();
+    auto stop = high_resolution_clock::now();
+    auto duration = duration_cast<milliseconds>(stop - start);
+    cout << "[TIME] " << left << setw(45) << step_name << ": " << duration.count() << " ms" << endl;
+    return duration.count();
+}
+
+// ==========================================
 // 辅助工具：张量随机生成器 (Dummy Data)
 // ==========================================
 PolyTensor create_dummy_tensor(MVZKExec* exec, int party, const vector<int>& shape) {
@@ -42,6 +60,116 @@ PolyTensor create_dummy_tensor(MVZKExec* exec, int party, const vector<int>& sha
         }
     }
     return exec->input(shape, data);
+}
+
+// ==========================================
+// 辅助工具：生成、打印并保存最终测试报告
+// ==========================================
+
+string strip_ansi(const string& input) {
+    string output;
+    bool in_escape = false;
+    for (char c : input) {
+        if (c == '\033') {
+            in_escape = true;
+        } else if (in_escape) {
+            if (c == 'm') in_escape = false; 
+        } else {
+            output += c;
+        }
+    }
+    return output;
+}
+
+void print_test_report(const string& model_name, int party, int N, int H, int W, 
+                       uint64_t bitlen, uint64_t digdec_k, bool do_truncation, 
+                       int num_threads, int omp_threads, uint64_t net_io_counter_start, uint64_t net_io_counter_end, 
+                       const string& start_time_str, const string& stop_time_str, time_t stop_time_t, 
+                       long long total_ms, const string& profiler_str) {
+    
+    // 1. 换算时间格式
+    long long h  = total_ms / 3600000;
+    long long m  = (total_ms % 3600000) / 60000;
+    long long s  = (total_ms % 60000) / 1000;
+    long long ms = total_ms % 1000;
+
+    // 2. 通信量计算
+    uint64_t total_comm_bytes = net_io_counter_end - net_io_counter_start;
+    double total_comm_kb = (double)total_comm_bytes / 1024.0;
+    double total_comm_mb = (double)total_comm_bytes / (1024.0 * 1024.0);
+    double total_comm_gb = total_comm_mb / 1024.0;
+
+    // 3. 使用 stringstream 统一构建报告内容
+    ostringstream oss;
+    oss << "\n=================================================\n";
+    oss << "                 FINAL TEST REPORT               \n";
+    oss << "=================================================\n";
+    oss << "[Model & Task Info]\n";
+    oss << "  - Model Name   : " << model_name << "\n";
+    oss << "  - Input Shape  : (N=" << N << ", C=3, H=" << H << ", W=" << W << ")\n";
+    oss << "  - Role         : " << (party == PARTY_PROVER ? "PROVER (Alice)" : "VERIFIER (Bob)") << "\n";
+    
+    // 运行时传入的动态参数
+    oss << "\n[Test Runtime Parameters]\n";
+    oss << "  - Run: Bit Length   : " << bitlen << "\n";
+    oss << "  - Run: DigDec_k     : " << digdec_k << "\n";
+    oss << "  - Run: Truncation   : " << (do_truncation ? "Enabled" : "Disabled") << "\n";
+    oss << "  - Run: Threads (IO) : " << num_threads << "\n";
+    oss << "  - Run: Threads (OMP): " << omp_threads << "\n";
+    
+    // config.h 中硬编码的系统底层静态配置
+    oss << "\n[Compiled System Configs (config.h)]\n";
+    oss << "  - MVZK_CONFIG_THREADS_NUM     : " << MVZK_CONFIG_THREADS_NUM << "\n";
+    oss << "  - MVZK_CONFIG_SCALE           : " << MVZK_CONFIG_SCALE << "\n";
+    oss << "  - MVZK_CONFIG_DEFAULT_BITLEN  : " << MVZK_CONFIG_DEFAULT_BITLEN << "\n";
+    oss << "  - MVZK_CONFIG_RELU_DIGDEC_K   : " << MVZK_CONFIG_NON_LINEAR_RELU_DIGDEC_K << "\n";
+    oss << "  - MVZK_OMP_SIZE_THRESHOLD     : " << MVZK_OMP_SIZE_THRESHOLD << "\n";
+    oss << "  - MVZK_MULT_CHECK_CNT         : " << MVZK_MULT_CHECK_CNT << "\n";
+    oss << "  - MVZK_CONFIG_TENSOR_CHK_CNT  : " << MVZK_CONFIG_TENSOR_CHECK_CNT << "\n";
+    oss << "  - MVZK_CONFIG_RANGE_CHK_BUF   : " << MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD << "\n";
+
+    oss << "\n[Execution Time]\n";
+    oss << "  - Start Time   : " << start_time_str << "\n";
+    oss << "  - End Time     : " << stop_time_str << "\n";
+    oss << "  - Total Time   : ";
+    if (h > 0) oss << h << "h ";
+    if (m > 0 || h > 0) oss << m << "m ";
+    oss << s << "s " << ms << "ms\n";
+    
+    oss << "\n[Communication]\n";
+    oss << "  - Data Sent    : " << fixed << setprecision(2) << total_comm_mb << " MB";
+    if (total_comm_gb > 1.0) oss << " (" << total_comm_gb << " GB)";
+    oss << "\n=================================================\n";
+
+    // 4. 打印到终端
+    string report_str = oss.str();
+    cout << report_str << endl; 
+    cout << profiler_str;       
+
+    // 5. 写入本地文件
+    string role_str = (party == PARTY_PROVER) ? "PROVER" : "VERIFIER";
+    
+    char time_buf[64];
+    strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", localtime(&stop_time_t));
+    string safe_time_str(time_buf);
+
+    string log_dir = "log/"; 
+    system(("mkdir -p " + log_dir).c_str()); 
+
+    string filename = log_dir + "report_" + model_name + "_" + role_str + "_" 
+                      + to_string(N) + "x" + to_string(H) + "x" + to_string(W) 
+                      + "_" + to_string(bitlen) + "bit_" 
+                      + safe_time_str + ".log";
+    
+    ofstream outfile(filename);
+    if (outfile.is_open()) {
+        outfile << report_str;
+        outfile << strip_ansi(profiler_str); 
+        outfile.close();
+        cout << "[INFO] Report successfully saved to: \033[36m" << filename << "\033[0m" << endl;
+    } else {
+        cerr << "\033[31m[ERROR] Failed to save report to " << filename << "\033[0m" << endl;
+    }
 }
 
 // ==========================================
@@ -121,9 +249,12 @@ int main(int argc, char** argv) {
     cout << "=================================================" << endl;
 
     int num_threads = MVZK_CONFIG_THREADS_NUM;
+    
+    // 获取 OpenMP 即将使用的最大计算线程数
+    int omp_threads = omp_get_max_threads(); 
+
     NetIO **io_arr = new NetIO*[num_threads];
     for (int i = 0; i < num_threads; ++i) {
-        // 每个线程分配一个专属的连续端口 (port, port+1, port+2...)
         io_arr[i] = new NetIO(party == PARTY_PROVER ? nullptr : "127.0.0.1", port + i);
     }
 
@@ -132,8 +263,16 @@ int main(int argc, char** argv) {
     else exec = new MVZKExecVerifier<NetIO>(io_arr);
 
     try {
-        // 记录端到端总时间起点
-        auto start_zk = high_resolution_clock::now();
+        uint64_t net_io_start = comm(io_arr, num_threads);
+        
+        // --------------------------------------------------
+        // [起点时刻]：分别获取高精度测速时钟和系统日历时钟
+        // --------------------------------------------------
+        auto start_zk = high_resolution_clock::now(); 
+        
+        time_t start_time_t = system_clock::to_time_t(system_clock::now()); 
+        string start_time_str = ctime(&start_time_t);
+        start_time_str.pop_back(); 
 
         cout << "[TEST] Loading Dummy Image..." << endl;
         PolyTensor image = create_dummy_tensor(exec, party, {N, 3, H, W});
@@ -141,8 +280,10 @@ int main(int argc, char** argv) {
         cout << "[TEST] Instantiating VGG-16 Model Weights..." << endl;
         VGG16Weights model = vgg16(exec, party, H, W);
 
-        // 前向传播
-        PolyTensor output = VGG16_Forward(image, model, bitlen, digdec_k, do_truncation);
+        PolyTensor output;
+        measure_time([&](){
+            output = VGG16_Forward(image, model, bitlen, digdec_k, do_truncation);
+        }, "VGG-16 Forward Pass Execution");
 
         cout << "[TEST] Output Shape: (" 
              << output.shape[0] << ", " << output.shape[1] << ")" << endl;
@@ -150,29 +291,56 @@ int main(int argc, char** argv) {
         cout << "[TEST] Securing final logits via Self-Relation..." << endl;
         PolyTensor::store_self_relation(output, "VGG16_Final_Logits_Check");
 
-        // 密码学约束校验
         cout << "\n[TEST] Triggering ZK Constraints Verification..." << endl;
-        exec->check_all();
+        measure_time([&](){
+            exec->check_all();
+        }, "Check All MACs and Circuits");
 
-        // 记录端到端总时间终点
-        auto stop_zk = high_resolution_clock::now();
+        // --------------------------------------------------
+        // [终点时刻]：分别获取高精度测速时钟和系统日历时钟
+        // --------------------------------------------------
+        auto stop_zk = high_resolution_clock::now(); 
+        
+        time_t stop_time_t = system_clock::to_time_t(system_clock::now()); 
+        string stop_time_str = ctime(&stop_time_t);
+        stop_time_str.pop_back(); 
+
+        uint64_t net_io_end = comm(io_arr, num_threads);
+
+        // 使用高精度时钟精确计算耗时
         auto total_ms = duration_cast<milliseconds>(stop_zk - start_zk).count();
+
+        // --------------------------------------------------
+        // 流重定向拦截：捕获 Profiler 的终端打印结果
+        // --------------------------------------------------
+        stringstream profiler_buffer;
+        streambuf* old_cout = cout.rdbuf(profiler_buffer.rdbuf()); 
+        exec->print_profiler_report(); 
+        cout.rdbuf(old_cout); 
+        string captured_profiler_str = profiler_buffer.str(); 
+
+        // --------------------------------------------------
+        // 输出格式化报告（写入文件 + 终端打印）
+        // --------------------------------------------------
+        print_test_report("VGG16", party, N, H, W, bitlen, digdec_k, do_truncation, 
+                          num_threads, omp_threads, net_io_start, net_io_end, start_time_str, stop_time_str, 
+                          stop_time_t, total_ms, captured_profiler_str);
+
+        // ==================================================
+        // 用户需求：在屏幕最底部，额外打印一次醒目的总时间
+        // ==================================================
         long long h  = total_ms / 3600000;
         long long m  = (total_ms % 3600000) / 60000;
         long long s  = (total_ms % 60000) / 1000;
         long long ms = total_ms % 1000;
 
-        cout << "\n=================================================" << endl;
-        cout << "[TIME] TOTAL PIPELINE: " << total_ms << " ms" << endl;
-        cout << "[TIME] FORMATTED TIME: ";
+        cout << "\n\033[1;36m[====> TOTAL EXECUTION TIME <====]\033[0m" << endl;
+        cout << "  ";
         if (h > 0) cout << h << "h ";
         if (m > 0 || h > 0) cout << m << "m ";
-        if (s > 0 || m > 0 || h > 0) cout << s << "s ";
-        cout << ms << "ms" << endl;
-
-        exec->print_profiler_report();
-
+        cout << s << "s " << ms << "ms  (" << total_ms << " ms)\n" << endl;
         cout << "=================================================\n" << endl;
+        
         cout << "\033[32m[SUCCESS] VGG-16 Test Passed Beautifully!\033[0m" << endl;
 
     } catch (const std::exception& e) {
@@ -180,6 +348,11 @@ int main(int argc, char** argv) {
     }
 
     if(exec) delete exec;
-    delete io_arr;
+
+    for (int i = 0; i < num_threads; ++i) {
+        delete io_arr[i]; 
+    }
+    delete[] io_arr;
+
     return 0;
 }
