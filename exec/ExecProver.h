@@ -104,7 +104,6 @@ public:
         
         // 2. 真实值 (Real Vals) 全部设为 0
         // 使用 assign 确保无论是空 vector 还是已被构造函数初始化的 vector，都能被正确覆盖为 0
-        padded_tensor.flat_real_vals.assign(target.total_elements, 0);
 
         // 3. 完美拷贝所有低阶系数 (0 到 target.degree)
         for (int d = 0; d <= target.degree; ++d) {
@@ -207,7 +206,6 @@ public:
         
         // 1. 确定元数据
         res.degree = std::max(lhs.degree, rhs.degree);
-        res.real_val = add_mod(lhs.real_val, rhs.real_val);
         
         // 2. 预分配结果内存 
         size_t size = res.degree + 1;
@@ -252,14 +250,6 @@ public:
 
         // 3. 处理 Real Values (res = lhs + rhs)
         // 获取指针 (Direct Access)
-        const uint64_t* lhs_real = lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-        uint64_t* res_real = res.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            res_real[i] = add_mod(lhs_real[i], rhs_real[i]);
-        }
 
         // 4. 处理系数 (逻辑对齐)
         // 这里的逻辑和 PolyDelta 完全一致，只是变成了并行版
@@ -324,7 +314,6 @@ public:
         
         // 1. 确定元数据
         res.degree = std::max(lhs.degree, rhs.degree);
-        res.real_val = add_mod(lhs.real_val, (PR - rhs.real_val));
         
         // 2. 预分配结果内存 
         size_t size = res.degree + 1;
@@ -368,14 +357,6 @@ public:
         size_t size = lhs.total_elements;
 
         // 3. 处理 Real Values (res = lhs - rhs)
-        const uint64_t* lhs_real = lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-        uint64_t* res_real = res.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            res_real[i] = add_mod(lhs_real[i], PR - rhs_real[i]);
-        }
 
         // 4. 处理系数 (逻辑对齐)
         // 计算偏移量
@@ -422,7 +403,6 @@ public:
 
         // 1. 确定元数据
         res.degree = lhs.degree + rhs.degree;
-        res.real_val = mult_mod(lhs.real_val, rhs.real_val);
 
         // 2. 初始化系数向量
         // 必须初始化为 0，因为后面要进行累加 (Convolution)
@@ -591,15 +571,7 @@ public:
         PolyTensor res(lhs.shape, res_degree); 
         size_t size = lhs.total_elements;
 
-        const uint64_t* lhs_real = lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-        uint64_t* res_real = res.get_real_vals_ptr();
-
         // 1. Real Values (明文) 并行乘法
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            res_real[i] = mult_mod(lhs_real[i], rhs_real[i]);
-        }
 
         // 2. 调用 utility.h 中的全局 Karatsuba 引擎计算系数
         karatsuba_core(
@@ -621,7 +593,6 @@ public:
 
     void add_assign(PolyDelta& lhs, const PolyDelta& rhs) override {
         // 1. 处理 Real Value (直接累加)
-        lhs.real_val = add_mod(lhs.real_val, rhs.real_val);
 
         // 2. 比较阶数，决定策略
         if (rhs.degree > lhs.degree) {
@@ -684,13 +655,6 @@ public:
         // =================================================
         // Part 1: 处理 Real Values (永远是 In-place 加法)
         // =================================================
-        uint64_t* lhs_real = lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            lhs_real[i] = add_mod(lhs_real[i], rhs_real[i]);
-        }
 
         // =================================================
         // Part 2: 处理 Coefficients (需要处理内存布局)
@@ -779,7 +743,6 @@ public:
     void sub_assign(PolyDelta& lhs, const PolyDelta& rhs) override {
         // 1. 处理 Real Value (lhs = lhs - rhs)
         // 使用 add_mod(a, PR - b) 来实现减法
-        lhs.real_val = add_mod(lhs.real_val, (PR - rhs.real_val));
 
         // 2. 比较阶数，决定扩容策略 (逻辑同 add_assign)
         if (rhs.degree > lhs.degree) {
@@ -837,13 +800,6 @@ public:
         // =================================================
         // Part 1: 处理 Real Values (永远是 In-place 加法)
         // =================================================
-        uint64_t* lhs_real = lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            lhs_real[i] = add_mod(lhs_real[i], PR - rhs_real[i]);
-        }
 
         // =================================================
         // Part 2: 处理 Coefficients (需要处理内存布局)
@@ -932,8 +888,6 @@ public:
     void mul_assign(PolyDelta& lhs, uint64_t val) override {
         // Prover 侧乘法：所有系数和 real_val 都要乘
         // 这个没有对齐问题，直接遍历即可
-        
-        lhs.real_val = mult_mod(lhs.real_val, val);
 
         // 使用引用遍历，避免下标访问开销，极快
         for (auto& c : lhs.coeffs) {
@@ -946,12 +900,6 @@ public:
         size_t size = lhs.total_elements;
 
         // 1. 更新 Real Values (全部乘 val)
-        uint64_t* real_ptr = lhs.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            real_ptr[i] = mult_mod(real_ptr[i], val);
-        }
 
         // 2. 更新所有系数 (Coefficients)
         // 无论是 0阶(MAC) 还是 1阶(x) 还是 高阶，全都要乘
@@ -981,15 +929,6 @@ public:
         
         lhs.flat_coeffs.assign(size * (new_degree + 1), 0);
         lhs.degree = new_degree;
-
-        const uint64_t* lhs_real_old = old_lhs.get_real_vals_ptr();
-        const uint64_t* rhs_real = rhs.get_real_vals_ptr();
-        uint64_t* lhs_real_new = lhs.get_real_vals_ptr();
-
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            lhs_real_new[i] = mult_mod(lhs_real_old[i], rhs_real[i]);
-        }
 
         // 卷积：动态双规避并行策略
         if (size >= MVZK_OMP_SIZE_THRESHOLD) {
@@ -1092,13 +1031,11 @@ public:
         */
 
     void add_assign_const(PolyDelta& lhs, uint64_t val) override {
-        lhs.real_val = add_mod(lhs.real_val, val);
         lhs.coeffs[lhs.degree] = add_mod(lhs.coeffs[lhs.degree], val);
         lhs.is_consumed = false; // 结果是新的，活跃
     }
 
     void sub_assign_const(PolyDelta& lhs, uint64_t val) override {
-        lhs.real_val = add_mod(lhs.real_val, (PR - val));
         lhs.coeffs[lhs.degree] = add_mod(lhs.coeffs[lhs.degree], (PR - val));
         lhs.is_consumed = false;
     }
@@ -1115,7 +1052,6 @@ public:
         PolyDelta res;
 
         res = lhs.clone();
-        res.real_val = add_mod(lhs.real_val, val);
         res.coeffs[lhs.degree] = add_mod(res.coeffs[lhs.degree], val);
 
         res.is_consumed = false;
@@ -1131,7 +1067,6 @@ public:
         PolyDelta res;
 
         res = lhs.clone();
-        res.real_val = add_mod(lhs.real_val, (PR - val));
         res.coeffs[lhs.degree] = add_mod(res.coeffs[lhs.degree], (PR - val));
 
         res.is_consumed = false;
@@ -1147,7 +1082,6 @@ public:
         PolyDelta res;
 
         res = rhs.clone();
-        res.real_val = add_mod((PR - res.real_val), val);
         for (size_t i = 0; i < res.coeffs.size(); i++){
             res.coeffs[i] = add_mod(0, (PR - res.coeffs[i]));
         }
@@ -1165,7 +1099,6 @@ public:
         PolyDelta res;
 
         res = lhs.clone();
-        res.real_val = mult_mod(res.real_val, val);
         for (size_t i = 0; i < res.coeffs.size(); i++){
             res.coeffs[i] = mult_mod(res.coeffs[i], val);
         }
@@ -1180,12 +1113,7 @@ public:
         size_t size = lhs.total_elements;
 
         // 1. 更新 Real Values (所有元素都加 val)
-        uint64_t* real_ptr = lhs.get_real_vals_ptr();
 
-        #pragma omp parallel for if(size >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
-        for (size_t i = 0; i < size; ++i) {
-            real_ptr[i] = add_mod(real_ptr[i], val);
-        }
 
         // 2. 更新系数 (Coefficients)
         // 根据 VOLE 承诺逻辑，常数加法通常作用于最高阶
@@ -1225,12 +1153,6 @@ public:
         // Part 1: 计算 Real Values (Z = X * Y)
         // ==========================================
         // 这是一个单纯的矩阵乘法，只调用一次内核
-        matrix_mul_acc_kernel(
-            res.get_real_vals_ptr(), 
-            lhs.get_real_vals_ptr(), 
-            rhs.get_real_vals_ptr(), 
-            M, K, N
-        );
 
         // ==========================================
         // Part 2: 计算 Coefficients (处理交叉项)
@@ -1278,14 +1200,6 @@ public:
         
         // 1. Real Values: 永远直接相加 (无视阶数，因为 RealValue 是明文值/Payload)
         // 对应 add_assign 中的: lhs_real[i] = add_mod(lhs_real[i], rhs_real[i]);
-        if (!src.flat_real_vals.empty()) {
-            const uint64_t* b_ptr = has_bias ? bias.get_real_vals_ptr() : nullptr;
-            permute_and_add_bias_kernel(
-                src.get_real_vals_ptr(), dst.get_real_vals_ptr(), b_ptr, 
-                1, // scale = 1
-                N, H_out, W_out, C_out
-            );
-        }
 
         // 2. Coeffs: 高阶对齐逻辑 (MSB Alignment)
         // 对应 add_assign 中的 shift 逻辑
@@ -1329,12 +1243,6 @@ public:
         bool has_bias = (bias.total_elements > 0);
 
         // 1. Real Values: 直接加
-        if (!data.flat_real_vals.empty()) {
-            const uint64_t* b_ptr = has_bias ? bias.get_real_vals_ptr() : nullptr;
-            add_bias_row_broadcast_kernel(
-                data.get_real_vals_ptr(), b_ptr, 1, Rows, Cols
-            );
-        }
 
         // 2. Coeffs: 高阶对齐 (Shift/Offset)
         if (!data.flat_coeffs.empty()) {
@@ -1371,14 +1279,6 @@ public:
         bool has_bias = (bias.total_elements > 0);
 
         // 1. Real Values: 永远直接相加
-        if (!src.flat_real_vals.empty()) {
-            const uint64_t* b_ptr = has_bias ? bias.get_real_vals_ptr() : nullptr;
-            permute_and_add_bias_1d_kernel(
-                src.get_real_vals_ptr(), dst.get_real_vals_ptr(), b_ptr, 
-                1, 
-                N, L_out, C_out
-            );
-        }
 
         // 2. Coeffs: 高阶对齐 (Offset Logic)
         if (!src.flat_coeffs.empty()) {
@@ -1535,97 +1435,6 @@ public:
         return result;
     }
 
-    [[deprecated("This relu should not be used as it fails to consider the truncation bit and the scale.")]]
-    PolyTensor relu_legacy(PolyTensor& x, uint64_t bitlen, uint64_t digdec_k, bool do_truncation) {
-        size_t n = x.total_elements;
-        int s = (bitlen + digdec_k - 1) / digdec_k;
-
-        // ======================================================
-        // Step 1: Plaintext Pre-computation
-        // ======================================================
-        std::vector<uint64_t> plain_abs_x(n);
-        std::vector<uint64_t> plain_sign_bq(n); 
-        const uint64_t* x_ptr = x.get_real_vals_ptr();
-        uint64_t zero_point = PR >> 1;
-
-        #pragma omp parallel for schedule(static)
-        for(size_t i = 0; i < n; ++i) {
-            uint64_t val = x_ptr[i];
-            if (val > zero_point) {
-                plain_abs_x[i] = PR - val; // |x|
-                plain_sign_bq[i] = 0;      // b_Q = 0 (Negative)
-            } else {
-                plain_abs_x[i] = val;      // |x|
-                plain_sign_bq[i] = 1;      // b_Q = 1 (Positive)
-            }
-        }
-
-        std::vector<uint64_t> flat_dig_dec = helper_plaintext_digit_decomposition(plain_abs_x, digdec_k, bitlen);
-
-        // ======================================================
-        // Step 2 & 3: Authenticate b_Q
-        // ======================================================
-        PolyTensor authenticated_bq = input(x.shape, plain_sign_bq);
-        
-        PolyTensor b_Q_check = authenticated_bq * (authenticated_bq - 1); 
-        PolyTensor::store_zero_relation(b_Q_check, "[ReLU] b_Q");
-
-        // ======================================================
-        // Step 4 & 5: Reconstruct |x| (双轨重构)
-        // ======================================================
-        uint64_t table_size = 1ULL << s;
-        std::vector<uint64_t> rangeTableData(table_size);
-        for (size_t i = 0; i < table_size; i++) rangeTableData[i] = i;
-        RangeCheckTable rangeTable(rangeTableData);
-
-        PolyTensor X_recon; // 用于校验 (完整值)
-        PolyTensor X_out;   // 用于输出 (截断值)
-
-        for (int j = 0; j < digdec_k; ++j) {
-            std::vector<uint64_t> seg_j_data(n);
-            #pragma omp parallel for schedule(static)
-            for(size_t i = 0; i < n; ++i) seg_j_data[i] = flat_dig_dec[i * digdec_k + j];
-
-            PolyTensor authenticated_seg_j = input(x.shape, seg_j_data);
-            rangeTable.range_check(authenticated_seg_j, "[ReLU] x_i range");
-
-            // 1. 完整重构 (必做)
-            uint64_t shift_scale = 1ULL << (j * s); 
-            if (j == 0) X_recon = authenticated_seg_j * shift_scale;
-            else        X_recon = X_recon + authenticated_seg_j * shift_scale;
-
-            // 2. 截断重构 (丢弃 j=0, 剩余段右移 s 位)
-            if (do_truncation && j > 0) {
-                uint64_t trunc_shift = 1ULL << ((j - 1) * s);
-                if (j == 1) X_out = authenticated_seg_j * trunc_shift;
-                else        X_out = X_out + authenticated_seg_j * trunc_shift;
-            }
-        }
-
-        // 如果不截断，直接把完整值赋给输出
-        if (!do_truncation) {
-            X_out = X_recon.clone();
-        }
-
-        // ======================================================
-        // Step 6, 7, 8: Consistency Check 
-        // 绝对注意：这里的校验必须用完整的 X_recon，不能用 X_out！
-        // ======================================================
-        PolyTensor term1 = authenticated_bq * (X_recon - x);
-        PolyTensor term2 = (1 - authenticated_bq) * (X_recon + x);
-
-        PolyTensor consistency = term1 + term2;
-        PolyTensor::store_zero_relation(consistency, "[ReLU (Conv)] from prev");
-
-        // ======================================================
-        // Step 9: Compute Output
-        // ======================================================
-        // y = b_Q * X_out (输出截断后的结果)
-        PolyTensor result = authenticated_bq * X_out;
-
-        return result;
-    }
-
     PolyTensor maxpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding, uint64_t bitlen, uint64_t digdec_k, uint64_t scale) override {
         int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
         int kH = kernel_size, kW = kernel_size;
@@ -1711,12 +1520,12 @@ public:
 
                             if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
                                 int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
+                                // pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
                                 for(int d=0; d<=pt_in.degree; ++d) {
                                     pt_in_aligned.get_coeffs_ptr(d)[m] = pt_in.get_coeffs_ptr(d)[in_idx];
                                 }
                             } else {
-                                pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
+                                // pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
                                 for(int d=0; d<pt_in.degree; ++d) {
                                     pt_in_aligned.get_coeffs_ptr(d)[m] = (d <= pt_max.degree) ? pt_max.get_coeffs_ptr(d)[m] : 0;
                                 }
@@ -1782,149 +1591,6 @@ public:
 
         PolyTensor::store_zero_relation(pt_prod, "[MaxPool] Existence check");
 
-        pt_in.mark_consumed();
-
-        return pt_max;
-    }
-
-    [[deprecated("This maxpool2d should not be used as it fails to consider the truncation bit and the scale.")]]
-    PolyTensor maxpool2d_legacy(PolyTensor& pt_in, int kernel_size, int stride, int padding, uint64_t bitlen, uint64_t digdec_k)  {
-        int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
-        int kH = kernel_size, kW = kernel_size;
-        int H_out = (H_in + 2 * padding - kH) / stride + 1;
-        int W_out = (W_in + 2 * padding - kW) / stride + 1;
-        
-        int M = N * C * H_out * W_out; 
-        int h = kH * kW;               
-
-        // ======================================================
-        // Step 1: Plaintext Pre-computation (Prover finds Max)
-        // ======================================================
-        std::vector<uint64_t> plain_max(M, 0);
-        const uint64_t* in_ptr = pt_in.get_real_vals_ptr();
-
-        for(int n=0; n<N; ++n) {
-            for(int c=0; c<C; ++c) {
-                for(int ho=0; ho<H_out; ++ho) {
-                    for(int wo=0; wo<W_out; ++wo) {
-                        int out_idx = n*(C*H_out*W_out) + c*(H_out*W_out) + ho*W_out + wo;
-                        uint64_t x_max = 0;
-                        bool first = true;
-
-                        for(int kh=0; kh<kH; ++kh) {
-                            for(int kw=0; kw<kW; ++kw) {
-                                int hi = ho * stride - padding + kh;
-                                int wi = wo * stride - padding + kw;
-                                if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
-                                    int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                    uint64_t val = in_ptr[in_idx];
-                                    if(first) {
-                                        x_max = val;
-                                        first = false;
-                                    } else {
-                                        if(helper_plaintext_fp_greater(val, x_max)) x_max = val;
-                                    }
-                                }
-                            }
-                        }
-                        plain_max[out_idx] = x_max;
-                    }
-                }
-            }
-        }
-
-        PolyTensor pt_max = this->input({N, C, H_out, W_out}, plain_max);
-
-        // ======================================================
-        // Step 2 & 3: Protocol Execution
-        // ======================================================
-        int s = (bitlen + digdec_k - 1) / digdec_k;
-        uint64_t table_size = 1ULL << s;
-        std::vector<uint64_t> rangeTableData(table_size);
-        for (size_t i = 0; i < table_size; i++) rangeTableData[i] = i;
-        RangeCheckTable rangeTable(rangeTableData);
-
-        PolyTensor pt_prod; 
-
-        for (int j = 0; j < h; ++j) {
-            int kh = j / kW;
-            int kw = j % kW;
-
-            // 对齐张量：完全继承输入的阶数，拒绝无效升阶
-            PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
-
-            #pragma omp parallel for collapse(4) schedule(static)
-            for(int n=0; n<N; ++n) {
-                for(int c=0; c<C; ++c) {
-                    for(int ho=0; ho<H_out; ++ho) {
-                        for(int wo=0; wo<W_out; ++wo) {
-                            int m = n*(C*H_out*W_out) + c*(H_out*W_out) + ho*W_out + wo;
-                            int hi = ho * stride - padding + kh;
-                            int wi = wo * stride - padding + kw;
-
-                            if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
-                                // 【Valid】: 纯粹的 1:1 数据搬运
-                                int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
-                                for(int d=0; d<=pt_in.degree; ++d) {
-                                    pt_in_aligned.get_coeffs_ptr(d)[m] = pt_in.get_coeffs_ptr(d)[in_idx];
-                                }
-                            } else {
-                                // 【Padding】: 构造代数刺客，使 (max - in_aligned) = 1 (高阶多项式形式)
-                                // 1. 明文: in = max - 1
-                                pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
-                                
-                                // 2. 低阶系数: 完全复制 max 的掩码，保证相减后相互抵消为 0
-                                for(int d=0; d<pt_in.degree; ++d) {
-                                    pt_in_aligned.get_coeffs_ptr(d)[m] = (d <= pt_max.degree) ? pt_max.get_coeffs_ptr(d)[m] : 0;
-                                }
-                                
-                                // 3. 最高阶系数: max_coeff - 1，保证相减后完美等于常数 1
-                                uint64_t max_coeff_high = (pt_in.degree <= pt_max.degree) ? pt_max.get_coeffs_ptr(pt_in.degree)[m] : 0;
-                                pt_in_aligned.get_coeffs_ptr(pt_in.degree)[m] = add_mod(max_coeff_high, PR - 1);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 核心减法：交由底层运算符接管对齐，pt_max 标记 consume 但数据依然存活
-            PolyTensor pt_y_hat_j = pt_max - pt_in_aligned;
-
-            // --- Upper Bound Check ---
-            std::vector<uint64_t> flat_dig_dec = helper_plaintext_digit_decomposition(pt_y_hat_j.flat_real_vals, digdec_k, bitlen);
-            PolyTensor X_recon;
-
-            for (int d = 0; d < digdec_k; ++d) {
-                std::vector<uint64_t> seg_data(M);
-                #pragma omp parallel for schedule(static)
-                for(size_t i=0; i<M; ++i) seg_data[i] = flat_dig_dec[i * digdec_k + d];
-
-                PolyTensor auth_seg = this->input({M}, seg_data);
-                rangeTable.range_check(auth_seg, "[MaxPool] x_i range");
-
-                uint64_t shift_scale = 1ULL << (d * s);
-                if (d == 0) X_recon = auth_seg * shift_scale;
-                else        X_recon = X_recon + auth_seg * shift_scale;
-                // auth_seg 被加法/乘法重载自动标记 consume
-            }
-            
-            // 提交区间约束
-            //PolyTensor pt_y_for_bound = pt_y_hat_j.clone(); // 此处 clone 是为了放入 store_relation 而不破坏连乘链路
-            PolyTensor::store_relation(X_recon, pt_y_hat_j, "[MaxPool] greater than");
-
-            // --- Existence Check ---
-            if (j == 0) {
-                pt_prod = pt_y_hat_j.clone();
-                pt_y_hat_j.is_consumed = true;
-            } else {
-                pt_prod = pt_prod * pt_y_hat_j;
-            }
-        }
-
-        PolyTensor::store_zero_relation(pt_prod, "[MaxPool] Existence check");
-
-        // 扫尾工作：标记输入张量已完成使命
         pt_in.mark_consumed();
 
         return pt_max;
@@ -2057,12 +1723,12 @@ public:
 
                             if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
                                 int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
+                                //pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
                                 for(int d=0; d<=pt_in.degree; ++d) {
                                     pt_in_aligned.get_coeffs_ptr(d)[m] = pt_in.get_coeffs_ptr(d)[in_idx];
                                 }
                             } else {
-                                pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
+                                //pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
                                 for(int d=0; d<pt_in.degree; ++d) {
                                     pt_in_aligned.get_coeffs_ptr(d)[m] = (d <= pt_max.degree) ? pt_max.get_coeffs_ptr(d)[m] : 0;
                                 }
@@ -2119,158 +1785,6 @@ public:
         return X_max_out;
     }
 
-    [[deprecated("This integrated_nl should not be used as it fails to consider the truncation bit and the scale.")]]
-    PolyTensor integrated_nl_legacy(PolyTensor& pt_in, int kernel_size, int stride, int padding, uint64_t bitlen, uint64_t digdec_k, bool do_truncation) {
-        int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
-        int kH = kernel_size, kW = kernel_size;
-        int H_out = (H_in + 2 * padding - kH) / stride + 1;
-        int W_out = (W_in + 2 * padding - kW) / stride + 1;
-        
-        int M = N * C * H_out * W_out; 
-        int h = kH * kW;               
-
-        // ======================================================
-        // Step 1: Plaintext Pre-computation
-        // ======================================================
-        std::vector<uint64_t> plain_max(M, 0); // 核心修改：初始值直接设为 0 (等效于 ReLU 屏蔽)
-        const uint64_t* in_ptr = pt_in.get_real_vals_ptr();
-
-        for(int n=0; n<N; ++n) {
-            for(int c=0; c<C; ++c) {
-                for(int ho=0; ho<H_out; ++ho) {
-                    for(int wo=0; wo<W_out; ++wo) {
-                        int out_idx = n*(C*H_out*W_out) + c*(H_out*W_out) + ho*W_out + wo;
-                        uint64_t x_max = 0; // 强制与 0 比较
-
-                        for(int kh=0; kh<kH; ++kh) {
-                            for(int kw=0; kw<kW; ++kw) {
-                                int hi = ho * stride - padding + kh;
-                                int wi = wo * stride - padding + kw;
-                                if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
-                                    int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                    uint64_t val = in_ptr[in_idx];
-                                    if(helper_plaintext_fp_greater(val, x_max)) x_max = val;
-                                }
-                            }
-                        }
-                        plain_max[out_idx] = x_max;
-                    }
-                }
-            }
-        }
-
-        // Step 2: Authenticate x_max
-        PolyTensor pt_max = this->input({N, C, H_out, W_out}, plain_max);
-
-        int s = (bitlen + digdec_k - 1) / digdec_k;
-        uint64_t table_size = 1ULL << s;
-        std::vector<uint64_t> rangeTableData(table_size);
-        for (size_t i = 0; i < table_size; i++) rangeTableData[i] = i;
-        RangeCheckTable rangeTable(rangeTableData);
-
-        // ======================================================
-        // Step 3 & 9: Range Check x_max & Reconstruct Output (Truncated)
-        // ======================================================
-        std::vector<uint64_t> flat_max_dec = helper_plaintext_digit_decomposition(pt_max.flat_real_vals, digdec_k, bitlen);
-        PolyTensor X_max_recon;
-        PolyTensor X_max_out;
-
-        for (int d = 0; d < digdec_k; ++d) {
-            std::vector<uint64_t> seg_data(M);
-            #pragma omp parallel for schedule(static)
-            for(size_t i=0; i<M; ++i) seg_data[i] = flat_max_dec[i * digdec_k + d];
-
-            PolyTensor auth_seg = this->input({M}, seg_data);
-            rangeTable.range_check(auth_seg, "[Integrated NL] x_i check (for truncation)");
-
-            uint64_t shift_scale = 1ULL << (d * s);
-            if (d == 0) X_max_recon = auth_seg * shift_scale;
-            else        X_max_recon = X_max_recon + auth_seg * shift_scale;
-
-            // Step 9: Truncation
-            if (do_truncation && d > 0) {
-                uint64_t trunc_shift = 1ULL << ((d - 1) * s);
-                if (d == 1) X_max_out = auth_seg * trunc_shift;
-                else        X_max_out = X_max_out + auth_seg * trunc_shift;
-            }
-        }
-        if (!do_truncation) X_max_out = X_max_recon.clone();
-        
-        PolyTensor::store_relation(X_max_recon, pt_max, "[Integrated NL] x_i digdec check");
-
-        // ======================================================
-        // Step 4 - 8: Loop over sub-matrix elements
-        // ======================================================
-        // 核心修改 (Step 8): 连乘初始值 d_0 设为 pt_max！
-        PolyTensor pt_prod = pt_max.clone(); 
-
-        for (int j = 0; j < h; ++j) {
-            int kh = j / kW;
-            int kw = j % kW;
-
-            PolyTensor pt_in_aligned({N, C, H_out, W_out}, pt_in.degree);
-
-            #pragma omp parallel for collapse(4) schedule(static)
-            for(int n=0; n<N; ++n) {
-                for(int c=0; c<C; ++c) {
-                    for(int ho=0; ho<H_out; ++ho) {
-                        for(int wo=0; wo<W_out; ++wo) {
-                            int m = n*(C*H_out*W_out) + c*(H_out*W_out) + ho*W_out + wo;
-                            int hi = ho * stride - padding + kh;
-                            int wi = wo * stride - padding + kw;
-
-                            if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
-                                int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
-                                pt_in_aligned.flat_real_vals[m] = pt_in.flat_real_vals[in_idx];
-                                for(int d=0; d<=pt_in.degree; ++d) {
-                                    pt_in_aligned.get_coeffs_ptr(d)[m] = pt_in.get_coeffs_ptr(d)[in_idx];
-                                }
-                            } else {
-                                // Padding: 保持为 max - 1 的代数刺客
-                                pt_in_aligned.flat_real_vals[m] = add_mod(pt_max.flat_real_vals[m], PR - 1);
-                                for(int d=0; d<pt_in.degree; ++d) {
-                                    pt_in_aligned.get_coeffs_ptr(d)[m] = (d <= pt_max.degree) ? pt_max.get_coeffs_ptr(d)[m] : 0;
-                                }
-                                uint64_t max_coeff_high = (pt_in.degree <= pt_max.degree) ? pt_max.get_coeffs_ptr(pt_in.degree)[m] : 0;
-                                pt_in_aligned.get_coeffs_ptr(pt_in.degree)[m] = add_mod(max_coeff_high, PR - 1);
-                            }
-                        }
-                    }
-                }
-            }
-
-            PolyTensor pt_y_hat_j = pt_max - pt_in_aligned;
-
-            std::vector<uint64_t> flat_y_hat_dec = helper_plaintext_digit_decomposition(pt_y_hat_j.flat_real_vals, digdec_k, bitlen);
-            PolyTensor X_recon;
-
-            for (int d = 0; d < digdec_k; ++d) {
-                std::vector<uint64_t> seg_data(M);
-                #pragma omp parallel for schedule(static)
-                for(size_t i=0; i<M; ++i) seg_data[i] = flat_y_hat_dec[i * digdec_k + d];
-
-                PolyTensor auth_seg = this->input({M}, seg_data);
-                rangeTable.range_check(auth_seg, "[Integrated NL] x_max - x digdec valid range");
-
-                uint64_t shift_scale = 1ULL << (d * s);
-                if (d == 0) X_recon = auth_seg * shift_scale;
-                else        X_recon = X_recon + auth_seg * shift_scale;
-            }
-            
-            PolyTensor::store_relation(X_recon, pt_y_hat_j, "[Integrated NL] x_max greater than (size = from Conv)");
-            
-            // Step 8: 连乘累加
-            pt_prod = pt_prod * pt_y_hat_j;
-        }
-
-        // Step 8: 验证 d_h == 0
-        PolyTensor::store_zero_relation(pt_prod, "[Integrated NL] existence check");
-        pt_in.mark_consumed();
-
-        // 整理形状并输出截断值
-        X_max_out.shape = {N, C, H_out, W_out};
-        return X_max_out;
-    }
 
     PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding) override {
         int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
@@ -2285,10 +1799,6 @@ public:
         uint64_t pool_area = (uint64_t)(kernel_size * kernel_size);
         uint64_t inv_area = pow_mod(pool_area, PR - 2); // 费马小定理求逆元
 
-        // 获取指针以加速计算
-        const uint64_t* in_real = pt_in.get_real_vals_ptr();
-        uint64_t* out_real = pt_out.get_real_vals_ptr();
-
         size_t total_elements = (size_t)N * C * H_out * W_out;
 
         #pragma omp parallel for collapse(4) if(total_elements >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
@@ -2298,7 +1808,6 @@ public:
                     for(int wo=0; wo<W_out; ++wo) {
                         int out_idx = n*(C*H_out*W_out) + c*(H_out*W_out) + ho*W_out + wo;
                         
-                        uint64_t sum_real = 0;
                         std::vector<uint64_t> sum_coeffs(pt_in.degree + 1, 0);
 
                         for(int kh=0; kh<kernel_size; ++kh) {
@@ -2310,7 +1819,6 @@ public:
                                 if(hi >= 0 && hi < H_in && wi >= 0 && wi < W_in) {
                                     int in_idx = n*(C*H_in*W_in) + c*(H_in*W_in) + hi*W_in + wi;
                                     
-                                    sum_real = add_mod(sum_real, in_real[in_idx]);
                                     for(int d=0; d<=pt_in.degree; ++d) {
                                         sum_coeffs[d] = add_mod(sum_coeffs[d], pt_in.get_coeffs_ptr(d)[in_idx]);
                                     }
@@ -2320,7 +1828,6 @@ public:
                         }
 
                         // 最后统一乘以模逆元（除法操作）
-                        out_real[out_idx] = mult_mod(sum_real, inv_area);
                         for(int d=0; d<=pt_in.degree; ++d) {
                             pt_out.get_coeffs_ptr(d)[out_idx] = mult_mod(sum_coeffs[d], inv_area);
                         }
@@ -2421,7 +1928,6 @@ public:
             pdList[i].coeffs.resize(2); // 0阶和1阶
             pdList[i].coeffs[0] = M_u;  // 常数项 = MAC
             pdList[i].coeffs[1] = x;    // 一次项 = 真实值
-            pdList[i].real_val = x;     // Prover 记录真实值
             pdList[i].is_consumed = false;
 
             // 计算修正值 (Masking)
@@ -2450,7 +1956,6 @@ public:
         res.coeffs.resize(2);
         res.coeffs[0] = M_u;  // 常数项 = MAC
         res.coeffs[1] = x;    // 一次项 = 真实值
-        res.real_val = x;     // Prover 记录真实值
         res.is_consumed = false;
 
         lam = add_mod(u, x);
@@ -2485,7 +1990,6 @@ public:
         // 1阶系数 (存 真实值 x)
         uint64_t* coeffs_1 = res.get_coeffs_ptr(1);
         // Real Values (存 真实值 x)
-        uint64_t* real_vals = res.get_real_vals_ptr();
 
         // 5. 并行填充数据 (Parallel Fill)
         // 利用 SoA 布局优势，数据是连续的，OpenMP + SIMD 效率极高
@@ -2500,7 +2004,6 @@ public:
             // 填充 PolyTensor
             coeffs_0[i] = M_u; // 常数项
             coeffs_1[i] = x;   // 一次项
-            real_vals[i] = x;  // 真实值
 
             // 计算 Mask: lam = u + x
             lams[i] = add_mod(u, x);
@@ -2570,8 +2073,7 @@ public:
             res[i].is_consumed = false;
             res[i].degree = 1;
             res[i].coeffs.resize(2);
-            res[i].real_val = HIGH64(vole_data[i]);
-            res[i].coeffs[1] = res[i].real_val;
+            res[i].coeffs[1] = HIGH64(vole_data[i]);
             // Note: this step is to make K = M + delta * x, instead of M = K + delta * x
             res[i].coeffs[0] = add_mod((PR - LOW64(vole_data[i])), 0);
         }
@@ -2582,7 +2084,7 @@ public:
         // 1. 计算总大小
         // 结构: [degree (4 bytes)] + [real_val (8 bytes)] + [coeffs (N * 8 bytes)]
         size_t num_coeffs = pd.coeffs.size();
-        size_t total_size = sizeof(int) + sizeof(uint64_t) + num_coeffs * sizeof(uint64_t);
+        size_t total_size = sizeof(int) + num_coeffs * sizeof(uint64_t);
 
         // 2. 准备缓冲区
         std::vector<uint8_t> buffer(total_size);
@@ -2593,8 +2095,6 @@ public:
         ptr += sizeof(int);
 
         // 4. 【新增】序列化 Real Value
-        memcpy(ptr, &pd.real_val, sizeof(uint64_t));
-        ptr += sizeof(uint64_t);
 
         // 5. 序列化 Coefficients
         if (num_coeffs > 0) {
@@ -2615,7 +2115,6 @@ public:
         for (const auto& pd : pd_list) {
             // [Degree] + [RealVal] + [Coeffs]
             total_size += sizeof(int);
-            total_size += sizeof(uint64_t); // 【新增】
             total_size += pd.coeffs.size() * sizeof(uint64_t);
         }
 
@@ -2633,8 +2132,6 @@ public:
             ptr += sizeof(int);
 
             // 4.2 【新增】Real Value
-            memcpy(ptr, &pd.real_val, sizeof(uint64_t));
-            ptr += sizeof(uint64_t);
 
             // 4.3 Coefficients
             size_t num_coeffs = pd.coeffs.size();
@@ -2652,7 +2149,7 @@ public:
         std::cout << std::left;
         std::cout << "\033[32m[Prover] " << std::setw(15) << name << "\033[0m"; // 绿色
         std::cout << " (Deg=" << pd.degree << ") ";
-        std::cout << "Val=" << std::setw(6) << pd.real_val << " | Poly = ";
+        std::cout << "Val=" << std::setw(6) << pd.get_real_val() << " | Poly = ";
         
         if (pd.coeffs.empty()) {
             std::cout << "(empty)";
@@ -2678,8 +2175,8 @@ public:
             std::cout << " (Deg=" << pt.degree << ") ";
             
             // 打印 Value
-            if (i < pt.flat_real_vals.size())
-                std::cout << "Val=" << std::setw(6) << pt.flat_real_vals[i] << " | Poly = ";
+            if (i < pt.total_elements)
+                std::cout << "Val=" << std::setw(6) << pt.get_real_vals_ptr()[i] << " | Poly = ";
             else 
                 std::cout << "Val=ERR    | Poly = ";
 
@@ -2824,35 +2321,6 @@ protected:
             // =========================================================
             // 3. 【Prover核心修改】累加 Real Values (手动并行归约)
             // =========================================================
-            const uint64_t* real_ptr = tensor.get_real_vals_ptr();
-            uint64_t sum_real = 0;
-
-            if (len >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel()) {
-                #pragma omp parallel
-                {
-                    uint64_t local_sum = 0; // 每个线程独享的累加器
-                    
-                    // nowait: 线程算完自己的部分后，不需要等其他线程，直接去临界区排队
-                    #pragma omp for nowait
-                    for (size_t i = 0; i < len; ++i) {
-                        uint64_t term = mult_mod(real_ptr[i], chi_vec[i]);
-                        local_sum = add_mod(local_sum, term);
-                    }
-
-                    // 临界区：安全地汇总到全局变量
-                    #pragma omp critical
-                    {
-                        sum_real = add_mod(sum_real, local_sum);
-                    }
-                }
-            } else {
-                // 小数据串行处理
-                for (size_t i = 0; i < len; ++i) {
-                    uint64_t term = mult_mod(real_ptr[i], chi_vec[i]);
-                    sum_real = add_mod(sum_real, term);
-                }
-            }
-            final_item.real_val = add_mod(final_item.real_val, sum_real);
 
             // =========================================================
             // 4. 【Prover核心修改】累加 Coefficients (同样应用并行归约)
@@ -3243,9 +2711,6 @@ protected:
 
             // 1. 构造子张量 (保持不变)
             PolyTensor sub_x({(int)current_chunk}, x.degree);
-            if (!x.flat_real_vals.empty()) {
-                std::memcpy(sub_x.get_real_vals_ptr(), x_ptr + offset, current_chunk * sizeof(uint64_t));
-            }
             if (!x.flat_coeffs.empty()) {
                 for (int d = 0; d <= x.degree; ++d) {
                     std::memcpy(sub_x.get_coeffs_ptr(d), x.get_coeffs_ptr(d) + offset, current_chunk * sizeof(uint64_t));

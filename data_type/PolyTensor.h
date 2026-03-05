@@ -25,7 +25,7 @@ public:
     // 2. 扁平化数据存储 (SoA Layout)
     // ==========================================
     std::vector<uint64_t> flat_coeffs; // Prover Only
-    std::vector<uint64_t> flat_real_vals; // Prover Only
+    // std::vector<uint64_t> flat_real_vals; // Prover Only
     std::vector<uint64_t> flat_keys;      // Verifier Only
 
     // ==========================================
@@ -50,7 +50,6 @@ public:
             for(int dim : shape) total_elements *= (size_t)dim;
         }
         flat_coeffs.resize(total_elements * (d + 1), 0);
-        flat_real_vals.resize(total_elements, 0);
         flat_keys.resize(total_elements, 0);
     }
 
@@ -60,7 +59,6 @@ public:
           total_elements(other.total_elements),
           degree(other.degree),
           flat_coeffs(std::move(other.flat_coeffs)),
-          flat_real_vals(std::move(other.flat_real_vals)),
           flat_keys(std::move(other.flat_keys)),
           is_consumed(other.is_consumed),
           is_constraint(other.is_constraint),
@@ -77,7 +75,6 @@ public:
             total_elements = other.total_elements;
             degree = other.degree;
             flat_coeffs = std::move(other.flat_coeffs);
-            flat_real_vals = std::move(other.flat_real_vals);
             flat_keys = std::move(other.flat_keys);
             is_consumed = other.is_consumed;
             is_constraint = other.is_constraint;
@@ -108,8 +105,20 @@ public:
         return &flat_coeffs[deg * total_elements];
     }
 
-    uint64_t* get_real_vals_ptr() { return flat_real_vals.data(); }
-    const uint64_t* get_real_vals_ptr() const { return flat_real_vals.data(); }
+    uint64_t* get_real_vals_ptr() { 
+        return get_coeffs_ptr(degree); 
+    }
+    const uint64_t* get_real_vals_ptr() const { 
+        return get_coeffs_ptr(degree); 
+    }
+
+    std::vector<uint64_t> get_real_vals_vector() const {
+        // 1. 拿到最高阶系数块的起始指针
+        const uint64_t* start_ptr = get_coeffs_ptr(degree);
+        
+        // 2. 直接利用内存连续性，一键拷贝成全新的 vector 并返回
+        return std::vector<uint64_t>(start_ptr, start_ptr + total_elements);
+    }
 
     uint64_t* get_keys_ptr() { return flat_keys.data(); }
     const uint64_t* get_keys_ptr() const { return flat_keys.data(); }

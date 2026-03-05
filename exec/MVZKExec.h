@@ -49,11 +49,6 @@ protected:
                 // 直接在 vector 尾部构造，无锁，无开销
                 res.emplace_back(std::vector<int>{1}, big_tensor.degree);
                 PolyTensor& t = res.back();
-
-                // Copy Real Val
-                if (!big_tensor.flat_real_vals.empty()) {
-                    t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
-                }
                 
                 // Copy Coeffs
                 if (!big_tensor.flat_coeffs.empty()) {
@@ -98,9 +93,6 @@ protected:
                 PolyTensor& t = local_res.back(); 
 
                 // --- 拷贝逻辑 (与串行路径一致) ---
-                if (!big_tensor.flat_real_vals.empty()) {
-                    t.flat_real_vals[0] = big_tensor.flat_real_vals[i];
-                }
                 if (!big_tensor.flat_coeffs.empty()) {
                     for(int d = 0; d <= big_tensor.degree; ++d) {
                         t.flat_coeffs[d] = big_tensor.flat_coeffs[d * len + i]; 
@@ -344,10 +336,8 @@ protected:
                           N, C, H, W, kH, kW, padding, stride, dilation, H_out, W_out);
         }
         // 2. Prover Real Values
-        if (!src.flat_real_vals.empty()) {
-            im2col_kernel(src.get_real_vals_ptr(), dst.get_real_vals_ptr(), 
-                          N, C, H, W, kH, kW, padding, stride, dilation, H_out, W_out);
-        }
+        // Removed
+
         // 3. Prover Coefficients (遍历每一阶)
         if (!src.flat_coeffs.empty()) {
             for (int d = 0; d <= src.degree; ++d) {
@@ -364,9 +354,6 @@ protected:
     ) {
         if (!src.flat_keys.empty()) {
             transpose_weight_kernel(src.get_keys_ptr(), dst.get_keys_ptr(), C_out, C_in, kH, kW);
-        }
-        if (!src.flat_real_vals.empty()) {
-            transpose_weight_kernel(src.get_real_vals_ptr(), dst.get_real_vals_ptr(), C_out, C_in, kH, kW);
         }
         if (!src.flat_coeffs.empty()) {
             for (int d = 0; d <= src.degree; ++d) {
@@ -386,9 +373,6 @@ protected:
     ) {
         if (!src.flat_keys.empty()) {
             transpose_matrix_kernel(src.get_keys_ptr(), dst.get_keys_ptr(), Rows, Cols);
-        }
-        if (!src.flat_real_vals.empty()) {
-            transpose_matrix_kernel(src.get_real_vals_ptr(), dst.get_real_vals_ptr(), Rows, Cols);
         }
         if (!src.flat_coeffs.empty()) {
             for (int d = 0; d <= src.degree; ++d) {
@@ -737,10 +721,6 @@ public:
         // 这里直接调用，逻辑更清晰
         if (!input.flat_keys.empty()) {
             im2col_1d_kernel(input.get_keys_ptr(), col_matrix.get_keys_ptr(), 
-                             N, C_in, L_in, K_size, padding, stride, dilation, L_out);
-        }
-        if (!input.flat_real_vals.empty()) {
-            im2col_1d_kernel(input.get_real_vals_ptr(), col_matrix.get_real_vals_ptr(), 
                              N, C_in, L_in, K_size, padding, stride, dilation, L_out);
         }
         if (!input.flat_coeffs.empty()) {

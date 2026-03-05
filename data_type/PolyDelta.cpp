@@ -17,7 +17,6 @@ PolyDelta PolyDelta::clone() const {
     // 1. 数据属性：完全复制 (Deep Copy)
     res.degree = this->degree;
     res.coeffs = this->coeffs;      // std::vector 的赋值是深拷贝
-    res.real_val = this->real_val;
     res.key = this->key;
     res.is_pre_generated = this->is_pre_generated; // 保留数据来源属性
 

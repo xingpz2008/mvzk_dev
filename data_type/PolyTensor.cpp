@@ -47,7 +47,6 @@ PolyTensor PolyTensor::clone() const {
     
     // 复制核心数据 (Deep Copy)
     res.flat_coeffs = this->flat_coeffs;
-    res.flat_real_vals = this->flat_real_vals;
     res.flat_keys = this->flat_keys;
     
     // 重置状态

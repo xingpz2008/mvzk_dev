@@ -15,7 +15,6 @@ public:
     // ==========================================
     int degree;
     std::vector<uint64_t> coeffs; // Prover
-    uint64_t real_val;            // Prover
     uint64_t key;                 // Verifier              
     mutable bool is_consumed; 
     bool is_pre_generated;
@@ -24,11 +23,11 @@ public:
     // ==========================================
     // 构造函数
     // ==========================================
-    PolyDelta() : degree(0), key(0), real_val(0), is_consumed(false), is_pre_generated(false), is_constraint(false) {}
+    PolyDelta() : degree(0), key(0), is_consumed(false), is_pre_generated(false), is_constraint(false) {}
 
     // 移动构造
     PolyDelta(PolyDelta&& other) noexcept 
-        : degree(other.degree), coeffs(std::move(other.coeffs)), real_val(other.real_val),
+        : degree(other.degree), coeffs(std::move(other.coeffs)),
           key(other.key), is_consumed(other.is_consumed), is_pre_generated(other.is_pre_generated), 
           is_constraint(other.is_constraint) {
         other.is_consumed = true;
@@ -41,7 +40,6 @@ public:
             degree = other.degree;
             coeffs = std::move(other.coeffs);
             key = other.key;
-            real_val = other.real_val;
             is_consumed = other.is_consumed;
             other.is_consumed = true;
             other.degree = 0;
@@ -58,6 +56,8 @@ public:
 
     // 【关键】析构函数只声明，去 .cpp 里实现
     ~PolyDelta();
+
+    uint64_t get_real_val() const { return coeffs[degree]; }
 
     // ==========================================
     // 运算符重载声明 (只声明)

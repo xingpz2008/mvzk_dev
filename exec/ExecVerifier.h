@@ -1522,7 +1522,6 @@ public:
             uint64_t delta_mult_u_add_x = mult_mod(this->delta, lam[i]);
             pdList[i].key = add_mod(vole_returned[i], delta_mult_u_add_x);
             pdList[i].degree = 1;
-            pdList[i].real_val = 0;
             pdList[i].is_consumed = false;
         }
     }
@@ -1538,7 +1537,6 @@ public:
         uint64_t delta_mult_u_add_x = mult_mod(this->delta, lam);
         res.key = add_mod(vole_returned, delta_mult_u_add_x);
         res.degree = 1;
-        res.real_val = 0;
         res.is_consumed = false;
 
         return res;
@@ -1695,7 +1693,6 @@ public:
 
         // 2. 【新增】接收 Real Value
         // 在 Check 阶段，Verifier 需要这个值来验证逻辑
-        io->recv_data(&res.real_val, sizeof(uint64_t));
 
         // 3. 准备 Coefficients 内存
         size_t num_coeffs = res.degree + 1;
@@ -1736,10 +1733,6 @@ public:
 
         if (mine.degree != hers.degree){
             LOG_ERROR("Inconsistent degree for verification! Mine = " << mine.degree << ", hers = " << hers.degree);
-            return false; 
-        }
-        if (hers.real_val != hers.coeffs[hers.degree]){
-            LOG_ERROR("Invalid commitment from prover (real_val)! Real_value = " << hers.real_val << ", Highest coef = " << hers.coeffs[hers.degree]);
             return false; 
         }
 
@@ -1794,7 +1787,7 @@ public:
         std::cout << std::left;
         std::cout << "\033[32m[Received] " << std::setw(15) << name << "\033[0m"; // 绿色
         std::cout << " (Deg=" << pd.degree << ") ";
-        std::cout << "Val=" << std::setw(6) << pd.real_val << " | Poly = ";
+        std::cout << "Val=" << std::setw(6) << pd.get_real_val() << " | Poly = ";
         
         if (pd.coeffs.empty()) {
             std::cout << "(empty)";
