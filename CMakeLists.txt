@@ -88,6 +88,34 @@ if (NOT EMP_TOOL_LIB)
 endif()
 
 # ==========================================
+# [性能优化选项]：默认全局尝试开启 jemalloc
+# ==========================================
+option(USE_JEMALLOC "Use jemalloc for memory allocation" ON)
+
+if(USE_JEMALLOC)
+    # 自动跨平台寻找 jemalloc，加入了 Mac Homebrew 的常见路径以防万一
+    find_library(JEMALLOC_LIB NAMES jemalloc
+        PATHS
+        /opt/homebrew/lib   # Apple Silicon Mac (M1/M2/M3)
+        /usr/local/lib      # Intel Mac / Linux 源码编译
+        /usr/lib            # Linux apt-get 安装路径
+        /usr/lib/x86_64-linux-gnu # Ubuntu 常见路径
+    )
+    
+    if(JEMALLOC_LIB)
+        # 找到了：绿字提示，并全局注入
+        message(STATUS "\033[32m[Performance Opt] Found jemalloc at ${JEMALLOC_LIB}. Enabling globally!\033[0m")
+        link_libraries(${JEMALLOC_LIB}) 
+    else()
+        # 没找到：黄字提示，直接忽略，绝不中断编译！
+        message(WARNING "\033[33m[Performance Opt] jemalloc not found. Falling back to default system allocator.\033[0m")
+    endif()
+else()
+    # 手动关闭：蓝字提示
+    message(STATUS "\033[34m[Performance Opt] USE_JEMALLOC is OFF. Using default system allocator.\033[0m")
+endif()
+
+# ==========================================
 # 4. 自动扫描源文件 (排除 test 文件夹)
 # ==========================================
 
