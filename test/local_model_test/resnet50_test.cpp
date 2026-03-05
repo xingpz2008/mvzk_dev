@@ -297,21 +297,16 @@ int main(int argc, char** argv) {
         ResNet50Weights model = resnet50(exec, party);
 
         PolyTensor output;
-        measure_time([&](){
-            output = ResNet50_Forward(image, model, bitlen, digdec_k, do_truncation);
-        }, "ResNet50 Forward Pass Execution");
+        output = ResNet50_Forward(image, model, bitlen, digdec_k, do_truncation);
+        
 
         cout << "[TEST] Output Shape: (" 
              << output.shape[0] << ", " << output.shape[1] << ", " 
              << output.shape[2] << ", " << output.shape[3] << ")" << endl;
 
-        cout << "[TEST] Securing final logits via Self-Relation..." << endl;
         PolyTensor::store_self_relation(output, "ResNet50_Final_Logits_Check");
-
-        cout << "\n[TEST] Triggering ZK Constraints Verification..." << endl;
-        measure_time([&](){
-            exec->check_all();
-        }, "Check All MACs and Circuits");
+        exec->check_all();
+        
 
         // --------------------------------------------------
         // [终点时刻]：分别获取高精度测速时钟和系统日历时钟

@@ -281,20 +281,15 @@ int main(int argc, char** argv) {
         VGG16Weights model = vgg16(exec, party, H, W);
 
         PolyTensor output;
-        measure_time([&](){
-            output = VGG16_Forward(image, model, bitlen, digdec_k, do_truncation);
-        }, "VGG-16 Forward Pass Execution");
-
+        output = VGG16_Forward(image, model, bitlen, digdec_k, do_truncation);
+        
         cout << "[TEST] Output Shape: (" 
              << output.shape[0] << ", " << output.shape[1] << ")" << endl;
 
-        cout << "[TEST] Securing final logits via Self-Relation..." << endl;
         PolyTensor::store_self_relation(output, "VGG16_Final_Logits_Check");
 
-        cout << "\n[TEST] Triggering ZK Constraints Verification..." << endl;
-        measure_time([&](){
-            exec->check_all();
-        }, "Check All MACs and Circuits");
+        exec->check_all();
+
 
         // --------------------------------------------------
         // [终点时刻]：分别获取高精度测速时钟和系统日历时钟

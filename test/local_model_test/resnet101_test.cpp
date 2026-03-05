@@ -287,22 +287,17 @@ int main(int argc, char** argv) {
         ResNet101Weights model = resnet101(exec, party);
 
         PolyTensor output;
-        measure_time([&](){
-            // 调用 ResNet101_Forward
-            output = ResNet101_Forward(image, model, bitlen, digdec_k, do_truncation);
-        }, "ResNet101 Forward Pass Execution");
+        
+        output = ResNet101_Forward(image, model, bitlen, digdec_k, do_truncation);
+        
 
         cout << "[TEST] Output Shape: (" 
              << output.shape[0] << ", " << output.shape[1] << ", " 
              << output.shape[2] << ", " << output.shape[3] << ")" << endl;
 
-        cout << "[TEST] Securing final logits via Self-Relation..." << endl;
         PolyTensor::store_self_relation(output, "ResNet101_Final_Logits_Check");
+        exec->check_all();
 
-        cout << "\n[TEST] Triggering ZK Constraints Verification..." << endl;
-        measure_time([&](){
-            exec->check_all();
-        }, "Check All MACs and Circuits");
 
         // --------------------------------------------------
         // [终点时刻]
