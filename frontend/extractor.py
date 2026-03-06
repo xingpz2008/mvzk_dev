@@ -25,7 +25,7 @@ Dependencies:
 Arguments:
     --out_dir       : (Optional) Destination directory path for the exported model.
                       If not provided, it defaults to:
-                      ../extracted_model_data/<model_name>_<timestamp>/
+                      ../generated_model/<model_name>_<timestamp>/
     --vision_model  : (Mode 1) Name of a standard built-in torchvision model 
                       (e.g., vgg16_bn, resnet18).
     --custom_script : (Mode 2) Path to the user-defined .py file containing 
@@ -214,7 +214,9 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     zk_graph_ir.append({
                         "name": node.name, "type": "integrated_nl",
                         "inputs": [str(prev_prev_node)], 
-                        "kernel_size": target_mod.kernel_size, "stride": target_mod.stride
+                        "kernel_size": target_mod.kernel_size, 
+                        "stride": target_mod.stride,
+                        "padding": target_mod.padding
                     })
                 
                 if not is_fused: 
@@ -223,7 +225,8 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                         "kernel_size": target_mod.kernel_size, "stride": target_mod.stride
                     })
 
-            elif isinstance(target_mod, (nn.Conv2d, nn.Linear, nn.AdaptiveAvgPool2d)):
+            elif isinstance(target_mod, (nn.Conv2d, nn.Linear)):
+                # 1. 处理带有权重和偏置的参数化算子 (Conv2d, Linear)
                 node_type = type(target_mod).__name__.lower()
                 node_info = {"name": node.name, "type": node_type, "inputs": [str(node.args[0])]}
                 
@@ -231,18 +234,37 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     node_info["stride"] = target_mod.stride
                     node_info["padding"] = target_mod.padding
                 
-                # [FEATURE] Export shape info for weights & biases
+                # 导出权重
                 if hasattr(target_mod, 'weight') and target_mod.weight is not None:
                     node_info["weight_shape"] = list(target_mod.weight.shape)
                     w_path = weights_dir / f"{node.name}_weight.bin"
                     target_mod.weight.detach().cpu().numpy().astype(np.float32).tofile(str(w_path))
                 
+                # 导出偏置
                 if hasattr(target_mod, 'bias') and target_mod.bias is not None:
                     node_info["bias_shape"] = list(target_mod.bias.shape)
                     b_path = weights_dir / f"{node.name}_bias.bin"
                     target_mod.bias.detach().cpu().numpy().astype(np.float32).tofile(str(b_path))
                     
                 zk_graph_ir.append(node_info)
+
+            elif isinstance(target_mod, nn.AdaptiveAvgPool2d):
+                # 2. 专项处理自适应池化层
+                out_size = target_mod.output_size
+                
+                # 判断是否为严格的全局平均池化 (1x1)
+                is_gap = (out_size == (1, 1) or out_size == 1 or out_size == [1, 1])
+                
+                if is_gap:
+                    # 将算子类型显式重命名为 global_avg_pool2d，方便 C++ 模板识别
+                    node_info = {"name": node.name, "type": "global_avg_pool2d", "inputs": [str(node.args[0])]}
+                    zk_graph_ir.append(node_info)
+                else:
+                    # 防御性拦截：不支持非 1x1 的 AdaptiveAvgPool
+                    print(f"\n[CRITICAL ERROR] AdaptiveAvgPool2d with output_size={out_size} is detected!")
+                    print("The ZK C++ backend currently ONLY supports AdaptiveAvgPool2d when used as a Global Average Pooling (output_size=1).")
+                    print("Please modify your PyTorch model architecture.")
+                    sys.exit(1)
 
             else:
                 module_type = type(target_mod).__name__.lower()
@@ -367,12 +389,11 @@ if __name__ == "__main__":
     print("\n[Step 1] Initializing Graph Optimization (BatchNorm Folding)...")
     fused_net = fx_fold_batchnorm(model)
     
-    # [FEATURE] Dynamic timestamped output directory generation
+# [FEATURE] Dynamic timestamped output directory generation
     if args.out_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Path(__file__).resolve().parent gets the directory of this script (e.g. emp-mvzk/extractor)
-        # .parent goes up one level (e.g. emp-mvzk)
-        base_dir = Path(__file__).resolve().parent.parent / "extracted_model_data"
+        # 直接定位到 emp-mvzk/generated_model
+        base_dir = Path(__file__).resolve().parent.parent / "generated_model"
         final_out_dir = str(base_dir / f"{model_name}_{timestamp}")
     else:
         final_out_dir = args.out_dir

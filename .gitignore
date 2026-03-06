@@ -28,4 +28,5 @@ TODO
 
 venv/
 *venv/
-extracted_model_data/
+generated_model/
+__pycache__/

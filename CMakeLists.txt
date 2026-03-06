@@ -1,3 +1,36 @@
+# ==============================================================================
+# MVZK 工程 CMake 构建脚本 & 使用指南
+# ==============================================================================
+#
+# 【基础编译】
+#   mkdir build && cd build
+#   cmake .. 
+#   make -j
+#   * 默认以 Release 模式编译（开启 LTO 和 -O3 优化）。
+#
+# 【调试模式编译】
+#   cmake .. -DCMAKE_BUILD_TYPE=Debug
+#
+# 
+#   随着工程增大，全量编译极其耗时。本脚本支持通过 -DTEST_SELECT 参数精准指定编译目标。
+#   
+#   用法示例: cmake .. -DTEST_SELECT=<模式>
+#
+#   支持的模式列表：
+#   - "ALL"        (默认): 编译所有手写测试 (test/) + 所有自动生成的模型 (generated_model/)
+#   - "DEV"        : 仅编译底层开发测试 (test/dev_test/*.cpp)
+#   - "FUNC"       : 仅编译算子功能验证测试 (test/functional_test/*.cpp)
+#   - "LOCALMODEL" : 仅编译手动编写的本地模型测试 (test/local_model_test/*.cpp)
+#   - "GEN"        : 仅编译 Python 工具链自动生成的模型 (generated_model/*_test.cpp)。
+#                    (自动将测试框架与算子实现文件联合编译)
+#   - "<特定文件名>" : 支持模糊匹配。如 `cmake .. -DTEST_SELECT=conv2d` 将只编译含 conv2d 的测试文件。
+#
+# 【底层依赖与隔离】
+#   - 默认全局搜寻并启用 jemalloc 以优化内存碎片，若无则静默回退系统分配器。
+#   - 严格的源码扫描隔离：自动屏蔽 frontend/ 目录，防止引入 Python 虚拟环境中的 C++ 源码。
+#
+# ==============================================================================
+
 cmake_minimum_required(VERSION 3.14)
 project(MVZK LANGUAGES CXX)
 
@@ -90,6 +123,9 @@ endif()
 # ==========================================
 # [性能优化选项]：默认全局尝试开启 jemalloc
 # ==========================================
+# 优雅生成 ANSI 颜色控制符的前缀 (ASCII 码 27 就是 ESC)
+string(ASCII 27 Esc)
+
 option(USE_JEMALLOC "Use jemalloc for memory allocation" ON)
 
 if(USE_JEMALLOC)
@@ -103,37 +139,43 @@ if(USE_JEMALLOC)
     )
     
     if(JEMALLOC_LIB)
-        # 找到了：绿字提示，并全局注入
-        message(STATUS "\033[32m[Performance Opt] Found jemalloc at ${JEMALLOC_LIB}. Enabling globally!\033[0m")
+        # 找到了：绿字提示，并全局注入 (使用 ${Esc} 替代 \033)
+        message(STATUS "${Esc}[32m[Performance Opt] Found jemalloc at ${JEMALLOC_LIB}. Enabling globally!${Esc}[0m")
         link_libraries(${JEMALLOC_LIB}) 
     else()
         # 没找到：黄字提示，直接忽略，绝不中断编译！
-        message(WARNING "\033[33m[Performance Opt] jemalloc not found. Falling back to default system allocator.\033[0m")
+        message(WARNING "${Esc}[33m[Performance Opt] jemalloc not found. Falling back to default system allocator.${Esc}[0m")
     endif()
 else()
     # 手动关闭：蓝字提示
-    message(STATUS "\033[34m[Performance Opt] USE_JEMALLOC is OFF. Using default system allocator.\033[0m")
+    message(STATUS "${Esc}[34m[Performance Opt] USE_JEMALLOC is OFF. Using default system allocator.${Esc}[0m")
 endif()
 
 # ==========================================
-# 4. 自动扫描源文件 (排除 test 文件夹)
+# 4. 自动扫描源文件 (安全版，防虚拟环境入侵)
 # ==========================================
 
-# 1. 扫描 data_type, operations 以及当前目录下的所有 .cpp
+# 步骤 1：递归扫描 (GLOB_RECURSE) 明确安全的纯 C++ 子文件夹
 file(GLOB_RECURSE LIBRARY_SOURCES 
     CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/data_type/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/operations/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" # 比如 config.cpp 如果有的话
+    "${CMAKE_CURRENT_SOURCE_DIR}/exec/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/local_models/*.cpp"
 )
 
-# 2. 【关键】从列表中剔除 test 文件夹下的文件
-# 这样库文件里就不会包含 main 函数，避免冲突
+# 步骤 2：非递归扫描 (GLOB) 根目录下的孤立 .cpp 文件（比如 config.cpp 等）
+# 绝对不要在这里用 GLOB_RECURSE，否则会把 python 虚拟环境里的 cpp 全拉进来！
+file(GLOB ROOT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+if(ROOT_SOURCES)
+    list(APPEND LIBRARY_SOURCES ${ROOT_SOURCES})
+endif()
+
+# 步骤 3：从列表中剔除 test 文件夹下的文件 (保持原样)
 file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp")
 if(TEST_SOURCES)
     list(REMOVE_ITEM LIBRARY_SOURCES ${TEST_SOURCES})
 endif()
-
 # 调试：打印一下到底编译了哪些文件 (可选)
 # message(STATUS "Library Sources: ${LIBRARY_SOURCES}")
 
@@ -169,61 +211,82 @@ target_link_libraries(mvzk_core PUBLIC
 # ==============================================================================
 
 # 1. 定义控制变量 TEST_SELECT
-# 默认值为 "ALL"，你可以通过命令行 -DTEST_SELECT=... 来修改
+# 默认值为 "ALL"
 # 选项: 
-#   "ALL"  : 编译 test/ 下所有子文件夹的所有 .cpp
+#   "ALL"  : 编译 test/ 下所有子文件夹的所有常规测试 + generated_model/ 下所有自动生成的模型
 #   "DEV"  : 只编译 test/dev_test/ 下的 .cpp
 #   "FUNC" : 只编译 test/functional_test/ 下的 .cpp
-#   "文件名": 编译指定的文件 (例如 "test_operators" 或 "tmp_file.cpp")
-set(TEST_SELECT "ALL" CACHE STRING "Select tests to build: ALL, DEV, FUNC, or specific filename")
+#   "LOCALMODEL": 只编译 test/local_model_test/ 下的 .cpp
+#   "GEN"  : 只编译 generated_model/ 下 Python 自动生成的 ZK 模型
+#   "文件名": 编译指定的文件 (例如 "test_operators")
+set(TEST_SELECT "ALL" CACHE STRING "Select tests to build: ALL, DEV, FUNC, LOCALMODEL, GEN, or specific filename")
 
 message(STATUS "------------------------------------------------")
 message(STATUS "Build Test Mode: ${TEST_SELECT}")
 
-# 2. 根据 TEST_SELECT 查找源文件
-set(TEST_SOURCES "")
+# 2. 准备两个独立的列表
+set(TEST_SOURCES "")     # 用于存放常规的单文件测试
+set(GEN_TEST_SOURCES "") # 用于存放自动生成的双文件模型测试
 
 if(TEST_SELECT STREQUAL "ALL")
-    # 递归查找 test 目录下所有的 .cpp 文件
+    # 【模式：ALL】同时抓取传统的 test 和新生成的 generated_model
     file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp")
+    file(GLOB_RECURSE GEN_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/generated_model/*_test.cpp")
 
 elseif(TEST_SELECT STREQUAL "DEV")
-    # 只查找 dev_test 目录
     file(GLOB TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/dev_test/*.cpp")
 
 elseif(TEST_SELECT STREQUAL "FUNC")
-    # 只查找 functional_test 目录
     file(GLOB TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/functional_test/*.cpp")
 
 elseif(TEST_SELECT STREQUAL "LOCALMODEL")
-    # 只查找 local_model_test 目录
     file(GLOB TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/local_model_test/*.cpp")
 
+elseif(TEST_SELECT STREQUAL "GEN")
+    # 【模式：GEN】只抓取 generated_model 下的文件
+    file(GLOB_RECURSE GEN_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/generated_model/*_test.cpp")
+
 else()
-    # 假设用户输入的是特定的文件名 (例如 "test_operators")
-    # 我们在 test 目录下递归搜索匹配该名字的文件
-    # 加上 * 使得输入 "test_op" 也能匹配 "test_operators.cpp"
-    file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/*${TEST_SELECT}_test*.cpp")
+    # 自定义文件名匹配 (只在常规 test 目录里找)
+    file(GLOB_RECURSE TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test/*${TEST_SELECT}*.cpp")
 endif()
 
-# 3. 遍历找到的源文件，为每一个文件生成一个独立的可执行程序
+# ==============================================================================
+# 3. 编译流程 A：处理常规的单文件测试 (来自 test/ 目录)
+# ==============================================================================
 if(TEST_SOURCES)
     foreach(test_src ${TEST_SOURCES})
-        # 获取文件名 (不带路径和后缀)，用作 Target 名字
-        # 例如: .../test/dev_test/test_operators.cpp -> test_operators
         get_filename_component(test_target_name ${test_src} NAME_WE)
+        message(STATUS "  [+] Adding standard test target: ${test_target_name}")
 
-        message(STATUS "  [+] Adding test target: ${test_target_name}")
-
-        # 生成可执行文件
         add_executable(${test_target_name} ${test_src})
-
-        # 链接核心库 (mvzk_core)
-        # 如果你有其他的库依赖 (比如 OpenMP, SSL)，确保 mvzk_core 已经 PUBLIC 链接了它们，或者在这里添加
         target_link_libraries(${test_target_name} PRIVATE mvzk_core)
-        
     endforeach()
-else()
+endif()
+
+# ==============================================================================
+# 4. 编译流程 B：处理自动生成的双文件模型 (来自 generated_model/ 目录)
+# ==============================================================================
+if(GEN_TEST_SOURCES)
+    foreach(test_src ${GEN_TEST_SOURCES})
+        get_filename_component(test_target_name ${test_src} NAME_WE)
+        
+        # 自动推导它的“亲兄弟”实现文件 (把 _test.cpp 替换成 .cpp)
+        string(REPLACE "_test.cpp" ".cpp" model_src ${test_src})
+
+        message(STATUS "  [+] Adding generated model target: ${test_target_name}")
+
+        # 将 test 框架和模型算子实现一起编译成一个可执行文件
+        add_executable(${test_target_name} ${test_src} ${model_src})
+
+        # 链接核心库，并强行把根目录加入头文件搜索路径
+        target_link_libraries(${test_target_name} PRIVATE mvzk_core)
+        target_include_directories(${test_target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    endforeach()
+endif()
+
+# 5. 如果啥都没找到的报警
+if(NOT TEST_SOURCES AND NOT GEN_TEST_SOURCES)
     message(WARNING "  [-] No test source files found matching: ${TEST_SELECT}")
 endif()
 
