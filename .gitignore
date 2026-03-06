@@ -25,3 +25,7 @@ bin/
 TODO
 
 .DS_Store
+
+venv/
+*venv/
+extracted_model_data/
