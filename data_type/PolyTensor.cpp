@@ -69,7 +69,7 @@ PolyTensor PolyTensor::from_public(const std::vector<int>& shape, const std::vec
     std::memcpy(res.get_coeffs_ptr(0), data.data(), data.size() * sizeof(uint64_t));
     
     // 填充 Real Values
-    std::memcpy(res.get_real_vals_ptr(), data.data(), data.size() * sizeof(uint64_t));
+    // std::memcpy(res.get_real_vals_ptr(), data.data(), data.size() * sizeof(uint64_t));
 
     std::memcpy(res.get_keys_ptr(), data.data(), data.size() * sizeof(uint64_t));
 

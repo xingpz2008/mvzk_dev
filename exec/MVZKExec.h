@@ -466,6 +466,8 @@ public:
     // Matrix Multiplication
     virtual PolyTensor MatMul(const PolyTensor& lhs, const PolyTensor& rhs) = 0;
 
+    virtual std::vector<uint64_t> reveal(const PolyTensor& pt) = 0;
+
     // =========================================================================
     // Part 3: LUT Section 
     // =========================================================================

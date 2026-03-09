@@ -1754,6 +1754,80 @@ public:
         return true;
     }
 
+    std::vector<uint64_t> reveal(const PolyTensor& pt) override {
+        // 1. 接收元数据
+        size_t recv_len;
+        int recv_deg;
+        io->recv_data(&recv_len, sizeof(size_t));
+        io->recv_data(&recv_deg, sizeof(int));
+
+        // 2. 基础检查
+        if (recv_len != pt.total_elements) {
+            LOG_ERROR(" Reveal Size Mismatch!");
+            std::cout << "Recv Len: " << recv_len << ", Local Len: " << pt.total_elements << std::endl;
+            // 接收剩余数据防止 socket 错位，然后返回 false (此处改为 exit 终止)
+            std::vector<uint64_t> trash(recv_len * (recv_deg + 1));
+            io->recv_data(trash.data(), trash.size() * sizeof(uint64_t));
+            exit(-1);
+        }
+
+        // 3. 接收系数
+        std::vector<uint64_t> recv_coeffs(recv_len * (recv_deg + 1));
+        io->recv_data(recv_coeffs.data(), recv_coeffs.size() * sizeof(uint64_t));
+
+        LOG_INFO("Received Tensor Data, Verifying...");
+
+        // 4. 预计算 Delta 的幂次 (Delta^0, Delta^1, ..., Delta^deg)
+        std::vector<uint64_t> d_pows(recv_deg + 1);
+        for(int d = 0; d <= recv_deg; ++d) {
+            d_pows[d] = delta_pow(this->delta, d);
+        }
+
+        // 5. 逐个元素验证
+        const uint64_t* local_keys = pt.get_keys_ptr(); // 获取本地的 K
+        bool all_pass = true;
+        int fail_count = 0;
+
+        for (size_t i = 0; i < recv_len; ++i) {
+            uint64_t rhs = 0;
+            
+            // 计算 RHS = Sum( Coeff[d][i] * Delta^d )
+            for (int d = 0; d <= recv_deg; ++d) {
+                // 定位系数：SoA 布局 -> [d * len + i]
+                uint64_t coeff = recv_coeffs[d * recv_len + i];
+                uint64_t term = mult_mod(coeff, d_pows[d]);
+                rhs = add_mod(rhs, term);
+            }
+
+            // 比较: RHS (Calculated) == LHS (Local Key)
+            if (rhs != local_keys[i]) {
+                if (fail_count < 10) { // 防止错误太多刷屏
+                    std::cout << "\033[31m[FAIL] Index " << i 
+                              << " | Calc RHS=" << rhs 
+                              << " != Local Key=" << local_keys[i] << "\033[0m" << std::endl;
+                }
+                all_pass = false;
+                fail_count++;
+            }
+        }
+
+        if (all_pass) {
+            // 验证通过，提取最高阶系数 (最后 recv_len 个元素)
+            size_t offset = recv_deg * recv_len;
+            std::vector<uint64_t> reveal_output(
+                recv_coeffs.begin() + offset, 
+                recv_coeffs.end()
+            );
+            
+            // [修正]: 返回提取出的明文数组，而不是 true
+            return reveal_output;
+        } else {
+            LOG_ERROR("INSTANT TENSOR CHECK FAILED");
+            std::cout << "Total Failures: " << fail_count << " / " << recv_len << std::endl;
+            exit(-1);
+        }
+    }
+
     // 打印 PolyDelta (Verifier 视角: Key)
     void debug_print(const PolyDelta& pd, std::string name = "") override {
         std::cout << std::left;

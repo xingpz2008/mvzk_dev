@@ -2144,6 +2144,19 @@ public:
         io->send_data(buffer.data(), total_size);
     }
 
+    std::vector<uint64_t> reveal(const PolyTensor& pt) override {
+        // 1. 发送元数据 (长度和阶数)
+        io->send_data(&pt.total_elements, sizeof(size_t));
+        io->send_data(&pt.degree, sizeof(int));
+        
+        // 2. 发送所有系数 (flat_coeffs)
+        // 注意：PolyTensor 采用 SoA 布局 [Deg0_Block][Deg1_Block]...
+        size_t total_coeffs_size = pt.flat_coeffs.size();
+        io->send_data(pt.flat_coeffs.data(), total_coeffs_size * sizeof(uint64_t));
+        std::vector<uint64_t> placeholder;
+        return placeholder;
+    }
+
     // 打印 PolyDelta (Prover 视角: Val + Poly)
     void debug_print(const PolyDelta& pd, std::string name = "") override {
         std::cout << std::left;

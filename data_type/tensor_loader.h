@@ -28,7 +28,8 @@ inline std::vector<uint64_t> load_raw_data_from_bin(
     int party, 
     const std::vector<int>& shape, 
     const std::string& filepath, 
-    TensorDataType dtype = TensorDataType::FP32) 
+    TensorDataType dtype = TensorDataType::FP32,
+    bool double_scale = false) 
 {
     // 1. Calculate the flattened size of the tensor
     size_t total_size = 1;
@@ -51,7 +52,15 @@ inline std::vector<uint64_t> load_raw_data_from_bin(
             
             for (size_t i = 0; i < total_size; ++i) {
                 // Convert float to finite field fixed-point integer
-                data[i] = real2fp(buffer[i]); 
+                float raw_val = buffer[i];
+                
+                // [神级修复] 在浮点数域提前放大一倍 Scale！
+                // 这样传给 real2fp 后，就会变成完美的双倍 Scale，且完全享受模运算的保护。
+                if (double_scale) {
+                    raw_val *= static_cast<double>(1ULL << MVZK_CONFIG_SCALE);
+                }
+                
+                data[i] = real2fp(raw_val);
             }
         } 
         // --- Branch B: Handle INT8 quantized models ---

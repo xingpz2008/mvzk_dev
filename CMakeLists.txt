@@ -267,21 +267,40 @@ endif()
 # ==============================================================================
 # 4. 编译流程 B：处理自动生成的双文件模型 (来自 generated_model/ 目录)
 # ==============================================================================
+# ==============================================================================
+# 4. 编译流程 B：处理自动生成的双文件模型 (来自 generated_model/ 目录)
+# ==============================================================================
 if(GEN_TEST_SOURCES)
     foreach(test_src ${GEN_TEST_SOURCES})
-        get_filename_component(test_target_name ${test_src} NAME_WE)
+        # 获取基础文件名 (例如 ResNet18_test)
+        get_filename_component(base_name ${test_src} NAME_WE)
         
-        # 自动推导它的“亲兄弟”实现文件 (把 _test.cpp 替换成 .cpp)
+        # 获取父级文件夹的绝对路径 (例如 .../generated_model/resnet18_20260309_141521)
+        get_filename_component(parent_dir ${test_src} DIRECTORY)
+        # 提取最后一级文件夹名
+        get_filename_component(folder_name ${parent_dir} NAME)
+        
+        # 拼接成独一无二的 Target 名字！防止 CMake 内部重名报错
+        set(test_target_name "${folder_name}_${base_name}")
+        
+        # 自动推导它的“亲兄弟”实现文件
         string(REPLACE "_test.cpp" ".cpp" model_src ${test_src})
 
-        message(STATUS "  [+] Adding generated model target: ${test_target_name}")
+        message(STATUS "  [+] Adding generated model target: ${test_target_name} -> Output to ${parent_dir}")
 
-        # 将 test 框架和模型算子实现一起编译成一个可执行文件
+        # 编译时使用全局唯一的名字
         add_executable(${test_target_name} ${test_src} ${model_src})
 
         # 链接核心库，并强行把根目录加入头文件搜索路径
         target_link_libraries(${test_target_name} PRIVATE mvzk_core)
         target_include_directories(${test_target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        # 1. RUNTIME_OUTPUT_DIRECTORY: 将编译好的二进制文件直接放进 generated_model/xxx 文件夹
+        # 2. OUTPUT_NAME: 把长长的唯一 Target 名字重命名回清爽的 "ResNet18_test"
+        set_target_properties(${test_target_name} PROPERTIES 
+            RUNTIME_OUTPUT_DIRECTORY "${parent_dir}"
+            OUTPUT_NAME "${base_name}"
+        )
     endforeach()
 endif()
 

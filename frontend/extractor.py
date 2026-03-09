@@ -336,6 +336,10 @@ if __name__ == "__main__":
     parser.add_argument('--model_class', type=str, help="Class name in your script (e.g., MyCustomNet)")
     parser.add_argument('--weights', type=str, help="Path to the .pth state_dict file", default=None)
     parser.add_argument('--out_dir', type=str, default=None, help="Optional specific output directory")
+    parser.add_argument('--batch', type=int, default=1, help="Input batch size (Default: 1)")
+    parser.add_argument('--channels', type=int, default=3, help="Input channels (Default: 3)")
+    parser.add_argument('--height', type=int, default=32, help="Input height (Default: 32)")
+    parser.add_argument('--width', type=int, default=32, help="Input width (Default: 32)")
     
     args = parser.parse_args()
     model = None
@@ -345,7 +349,7 @@ if __name__ == "__main__":
         import torchvision.models as models
         print(f"Loading standard torchvision model: {args.vision_model}")
         model_fn = getattr(models, args.vision_model)
-        model = model_fn(weights=None)
+        model = model_fn(weights='DEFAULT')
         model_name = args.vision_model
         
     elif args.custom_script and args.model_class:
@@ -400,3 +404,22 @@ if __name__ == "__main__":
 
     print(f"\n[Step 2] Exporting JSON graph and .bin weights to {final_out_dir}...")
     export_zk_model(fused_net, export_dir_str=final_out_dir)
+
+    pth_path = Path(final_out_dir) / "pytorch_weights.pth"
+    torch.save(model.state_dict(), pth_path)
+    print(f"  - PyTorch Native Weights saved to: {pth_path}")
+
+    # [状态管理] 创建 SSOT 元数据，供下游所有脚本无缝调用
+    meta_data = {
+        "model_name": model_name,
+        "N": args.batch,
+        "C": args.channels,
+        "H": args.height,
+        "W": args.width
+    }
+    meta_path = Path(final_out_dir) / "metadata.json"
+    with open(meta_path, "w") as f:
+        json.dump(meta_data, f, indent=4)
+    
+    print(f"  - \033[1;36mMetadata SSOT\033[0m saved to: {meta_path}")
+    print("\033[1;32m[SUCCESS] Exporter Pipeline Completed Perfectly!\033[0m\n")

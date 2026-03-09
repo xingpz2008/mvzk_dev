@@ -67,6 +67,9 @@ def generate_cpp_code(graph_data, model_name):
     
     tab = "    "
     
+    # [新增] Scale 追踪器：记录每个张量的当前缩放阶数
+    scale_map = {}
+    
     for node in graph_data:
         n_name = node["name"]
         n_type = node["type"]
@@ -75,6 +78,7 @@ def generate_cpp_code(graph_data, model_name):
         # 1. Capture Input/Output
         if n_type == "input":
             input_name = c_var
+            scale_map[c_var] = 1 # [新增] 输入的 Scale 永远是 1S
             continue
         if n_type == "output":
             # Assuming output node receives exactly one variable from the graph
@@ -96,7 +100,13 @@ def generate_cpp_code(graph_data, model_name):
                 b_shape = format_shape(node["bias_shape"])
                 host_fields.append(f"{tab}std::vector<uint64_t> {n_name}_b;")
                 poly_fields.append(f"{tab}PolyTensor {n_name}_b;")
-                load_stmts.append(f"{tab}hw.{n_name}_b = load_raw_data_from_bin(party, {b_shape}, bin_dir + \"/{n_name}_bias.bin\");")
+                
+                # [核心修改] 智能判别：只有 conv2d 和 linear 需要双倍 Scale
+                needs_double_scale = (n_type in ["conv2d", "linear"])
+                is_bias_str = "true" if needs_double_scale else "false"
+                
+                # 在加载函数中传入 TensorDataType::FP32 以及 is_bias_str
+                load_stmts.append(f"{tab}hw.{n_name}_b = load_raw_data_from_bin(party, {b_shape}, bin_dir + \"/{n_name}_bias.bin\", TensorDataType::FP32, {is_bias_str});")
                 inject_stmts.append(f"{tab}pw.{n_name}_b = exec->input({b_shape}, hw.{n_name}_b);")
             else:
                 inject_stmts.append(f"{tab}pw.{n_name}_b = PolyTensor();")
@@ -104,20 +114,59 @@ def generate_cpp_code(graph_data, model_name):
         # 3. Generate Forward Pass Code via Operator Registry
         in_vars = [f"tensor_{i}" for i in node.get("inputs", [])]
         in_var = in_vars[0] if len(in_vars) > 0 else ""
+        in_var_0 = in_vars[0] if len(in_vars) > 0 else ""
+        in_var_1 = in_vars[1] if len(in_vars) > 1 else ""
+        
+        # --- [新增] Scale Tracking & Auto-Alignment Logic ---
+        out_scale = 1
+        
+        if n_type in ["conv2d", "linear"]:
+            out_scale = scale_map.get(in_var_0, 1) + 1
+        elif n_type == "relu":
+            out_scale = 1 # 截断阀门，压回 1S
+        elif n_type in ["max_pool2d", "avgpool2d", "global_avg_pool2d", "flatten"]:
+            out_scale = scale_map.get(in_var_0, 1) # 直接继承上一层的 Scale
+        elif n_type == "func_add":
+            s0 = scale_map.get(in_var_0, 1)
+            s1 = scale_map.get(in_var_1, 1)
+            
+            # 动态插入对齐代码
+            if s0 < s1:
+                forward_stmts.append(f"{tab}// [Auto-Align] Scaling up {in_var_0} from {s0}S to {s1}S")
+                forward_stmts.append(f"{tab}PolyTensor {in_var_0}_scaled = {in_var_0} * real2fp(1.0);")
+                in_var_0 = f"{in_var_0}_scaled"
+                if in_var == in_vars[0]: in_var = in_var_0 
+                out_scale = s1
+            elif s1 < s0:
+                forward_stmts.append(f"{tab}// [Auto-Align] Scaling up {in_var_1} from {s1}S to {s0}S")
+                forward_stmts.append(f"{tab}PolyTensor {in_var_1}_scaled = {in_var_1} * real2fp(1.0);")
+                in_var_1 = f"{in_var_1}_scaled"
+                if in_var == in_vars[1]: in_var = in_var_1 
+                out_scale = s0
+            else:
+                out_scale = s0
+                
+        scale_map[c_var] = out_scale
+        # ----------------------------------------------------
         
         stride = get_arg(node.get("stride"), 1)
         padding = get_arg(node.get("padding"), 0)
         k_size = get_arg(node.get("kernel_size"), 3)
         
         # Look up the C++ API template
-        template = CPP_API_MAP.get(n_type, CPP_API_MAP["unknown"])
+        if n_type not in CPP_API_MAP or n_type == "unknown":
+            raise NotImplementedError(
+                f"\n\033[1;31m[COMPILER ERROR] Unsupported Operation Detected: '{n_type}', Node name: '{n_name}').\n"
+                f"Please check backend_cpp_templates.py to confirm whether the operation has been implemented.\033[0m"
+            )
+        template = CPP_API_MAP[n_type]
         
         # Format the C++ string
         cpp_line = template.format(
             out_var=c_var,
             in_var=in_var,
-            in_var_0=in_vars[0] if len(in_vars) > 0 else "",
-            in_var_1=in_vars[1] if len(in_vars) > 1 else "",
+            in_var_0=in_var_0,  # [重要修改] 这里必须使用可能被替换成 _scaled 的安全变量
+            in_var_1=in_var_1,  # [重要修改] 同上
             node_name=n_name,
             stride=stride,
             padding=padding,
@@ -134,7 +183,8 @@ def generate_cpp_code(graph_data, model_name):
         "inject_statements": "\n".join(inject_stmts),
         "forward_statements": "\n".join(forward_stmts),
         "input_name": input_name,
-        "output_name": output_name
+        "output_name": output_name,
+        "final_scale_power": scale_map.get(output_name, 2) # [新增] 输出 Scale 阶数
     }
 
 if __name__ == "__main__":
@@ -155,13 +205,30 @@ if __name__ == "__main__":
         
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[Compiler] Parsing {json_path.name} ...")
+    print(f"\033[1;36m[Compiler]\033[0m Parsing {json_path.name} and metadata ...")
     with open(json_path, 'r') as f:
         graph_data = json.load(f)
 
+    # [状态管理] 读取 SSOT 元数据
+    meta_path = json_path.parent / "metadata.json"
+    if meta_path.exists():
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+    else:
+        print("\033[33m[WARNING] metadata.json not found, using default dimensions (1, 3, 32, 32).\033[0m")
+        meta = {"N": 1, "C": 3, "H": 32, "W": 32}
+
     code_sections = generate_cpp_code(graph_data, args.model_name)
-    code_sections["model_name"] = args.model_name
-    code_sections["model_name_lower"] = args.model_name.lower()
+    
+    # 将元数据尺寸注入到 C++ 模板中
+    code_sections.update({
+        "model_name": args.model_name,
+        "model_name_lower": args.model_name.lower(),
+        "N": meta["N"],
+        "C": meta["C"],
+        "H": meta["H"],
+        "W": meta["W"]
+    })
 
     # Fill templates
     h_code = TEMPLATE_HEADER.format(**code_sections)
