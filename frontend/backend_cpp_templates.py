@@ -195,14 +195,15 @@ string format_base_report(const string& model_name, int party, int N, int C, int
     oss << "  - Run: Threads (OMP): " << omp_threads << "\\n";
     
     oss << "\\n[Compiled System Configs (config.h)]\\n";
-    oss << "  - MVZK_CONFIG_THREADS_NUM     : " << MVZK_CONFIG_THREADS_NUM << "\\n";
-    oss << "  - MVZK_CONFIG_SCALE           : " << MVZK_CONFIG_SCALE << "\\n";
-    oss << "  - MVZK_CONFIG_DEFAULT_BITLEN  : " << MVZK_CONFIG_DEFAULT_BITLEN << "\\n";
-    oss << "  - MVZK_CONFIG_RELU_DIGDEC_K   : " << MVZK_CONFIG_NON_LINEAR_RELU_DIGDEC_K << "\\n";
-    oss << "  - MVZK_OMP_SIZE_THRESHOLD     : " << MVZK_OMP_SIZE_THRESHOLD << "\\n";
-    oss << "  - MVZK_MULT_CHECK_CNT         : " << MVZK_MULT_CHECK_CNT << "\\n";
-    oss << "  - MVZK_CONFIG_TENSOR_CHK_CNT  : " << MVZK_CONFIG_TENSOR_CHECK_CNT << "\\n";
-    oss << "  - MVZK_CONFIG_RANGE_CHK_BUF   : " << MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD << "\\n";
+    oss << "  - MVZK_CONFIG_THREADS_NUM      : " << MVZK_CONFIG_THREADS_NUM << "\\n";
+    oss << "  - MVZK_CONFIG_SCALE            : " << MVZK_CONFIG_SCALE << "\\n";
+    oss << "  - MVZK_CONFIG_DEFAULT_BITLEN   : " << MVZK_CONFIG_DEFAULT_BITLEN << "\\n";
+    oss << "  - MVZK_CONFIG_RELU_DIGDEC_K    : " << MVZK_CONFIG_NON_LINEAR_RELU_DIGDEC_K << "\\n";
+    oss << "  - MVZK_OMP_SIZE_THRESHOLD      : " << MVZK_OMP_SIZE_THRESHOLD << "\\n";
+    oss << "  - MVZK_MULT_CHECK_CNT          : " << MVZK_MULT_CHECK_CNT << "\\n";
+    oss << "  - MVZK_CONFIG_TENSOR_CHK_CNT   : " << MVZK_CONFIG_TENSOR_CHECK_CNT << "\\n";
+    oss << "  - MVZK_CONFIG_RANGE_CHK_BUF    : " << MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD << "\\n";
+    oss << "  - MVZK_CONFIG_MULT_PRODUCT_THR : " << MVZK_CONFIG_MULT_PRODUCT_THRESHOLD << "\\n";
 
     oss << "\\n[Execution Time]\\n";
     oss << "  - Start Time   : " << start_time_str << "\\n";

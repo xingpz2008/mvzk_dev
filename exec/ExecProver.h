@@ -127,6 +127,19 @@ public:
         }
     }
 
+    PolyTensor refresh_tensor_degree(const PolyTensor& high_degree_tensor, const std::string& check_name) override {
+        // 1. 获取 Prover 声称的明文数据 (警告：此时数据不可信)
+        std::vector<uint64_t> plaintext_val = high_degree_tensor.get_real_vals_vector();
+        std::vector<int> shape_vec = high_degree_tensor.shape;
+
+        // 2. 注入系统，获取崭新的 Degree 1 张量 res
+        PolyTensor res = input(shape_vec, plaintext_val);
+
+        PolyTensor::store_relation(high_degree_tensor, res, check_name);
+
+        return res;
+    }
+
     /*
     void submit_matmul_tensor_to_buffer(PolyTensor&& pt){
         if (!pt.is_constraint) {

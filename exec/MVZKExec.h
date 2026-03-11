@@ -410,6 +410,7 @@ public:
     virtual PolyDelta input(uint64_t raw_data) = 0;
     virtual std::vector<PolyDelta> vole2pd(std::vector<__uint128_t>& vole_data, int size) = 0;
     virtual std::vector<PolyDelta> extend_vope_from_vole(uint64_t deg, int size) = 0;
+    virtual PolyTensor refresh_tensor_degree(const PolyTensor& high_degree_tensor, const std::string& check_name) = 0;
 
     // --- 1.3 基础运算 (生成新对象) ---
     // Poly vs Poly

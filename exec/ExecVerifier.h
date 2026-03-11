@@ -128,6 +128,17 @@ public:
         }
     }
 
+    PolyTensor refresh_tensor_degree(const PolyTensor& high_degree_tensor, const std::string& check_name) override {
+        // There is no plaintext for verifier
+        std::vector<uint64_t> plaintext_data_dummy;
+        std::vector<int> shape = high_degree_tensor.shape;
+
+        PolyTensor res = input(shape, plaintext_data_dummy);
+        PolyTensor::store_relation(high_degree_tensor, res, check_name);
+
+        return res;
+    }
+
     /*
     void submit_matmul_tensor_to_buffer(PolyTensor&& pt){
         if (!pt.is_constraint) {

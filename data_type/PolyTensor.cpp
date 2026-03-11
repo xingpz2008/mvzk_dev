@@ -369,3 +369,10 @@ PolyTensor PolyTensor::reshape(const std::vector<int>& new_shape) const {
     this->is_consumed = true;
     return res;
 }
+
+// ==========================================
+// Degree Manipulation
+// ==========================================
+PolyTensor PolyTensor::refresh_degree(const std::string& check_name) {
+    return MVZKExec::mvzk_exec->refresh_tensor_degree(*this, check_name);
+}

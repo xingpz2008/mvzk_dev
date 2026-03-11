@@ -144,6 +144,9 @@ public:
     PolyTensor flatten() const;
     PolyTensor reshape(const std::vector<int>& new_shape) const;
 
+    // Degree Manipulation
+    PolyTensor refresh_degree(const std::string& check_name = "Refreshed Tensor");
+
     // ==========================================
     // 6. 运算符重载 - In-Place (修改自身)
     // ==========================================

@@ -295,13 +295,8 @@ inline PolyTensor fast_tree_product(std::vector<PolyTensor>& items) {
         return std::move(items[0]);
     }
 
-    // Update flag first
-    /*for (size_t i = 0; i < items.size(); i++){
-        items[i].is_consumed = true;
-    }*/
-
     // 2. 接管所有权 (Take Ownership)
-    // 我们把输入 items 移动到本地 current_layer，避免修改外部传入的 vector 导致副作用
+    // 把输入 items 移动到本地 current_layer，避免修改外部传入的 vector 导致副作用
     std::vector<PolyTensor> current_layer = std::move(items);
 
     // 3. 树状归约循环 (Ping-Pong 模式)
@@ -309,32 +304,43 @@ inline PolyTensor fast_tree_product(std::vector<PolyTensor>& items) {
         size_t current_size = current_layer.size();
         size_t next_size = (current_size + 1) / 2;
 
-        // 【关键 1】创建下一层的 Buffer
-        // 调用 PolyTensor 的默认构造函数。
-        // 因为 total_elements 默认为 0，所以这里只分配 vector 对象头，
-        // 不会分配系数内存 (flat_coeffs)，开销极小。
+        // 【关键 1】创建下一层的 Buffer (零拷贝开销)
         std::vector<PolyTensor> next_layer(next_size);
 
-        // 【关键 2】并行计算 (无冲突)
-        // 读: current_layer (只读)
-        // 写: next_layer (只写，且每个线程写不同的 i)
+        // ==========================================================
+        // 【关键 2】多线程并行计算 (纯数学)
+        // 读: current_layer (只读) | 写: next_layer (无冲突)
+        // 绝对不在并发域里做网络通信，彻底杜绝死锁！
+        // ==========================================================
         #pragma omp parallel for schedule(guided) if(current_size >= MVZK_CONFIG_OMP_FAST_TREE_PRODUCT_SIZE_THRESHOLD && !omp_in_parallel())
         for (size_t i = 0; i < current_size / 2; ++i) {
-            // current_layer[...] 的 is_consumed 会在 mul 内部被置为 true
-            // 结果直接 Move 给 next_layer[i]
             next_layer[i] = current_layer[2 * i] * current_layer[2 * i + 1];
         }
 
-        // 4. 处理奇数个元素
-        // 最后一个落单的元素直接 Move 到下一层末尾
+        // 处理奇数个元素，直接晋级
         if (current_size % 2 != 0) {
             next_layer.back() = std::move(current_layer.back());
         }
 
-        // 【关键 3】交换 Buffer (Ping-Pong)
-        // std::move 只是交换 vector 内部的指针，时间复杂度 O(1)
-        // 旧的 current_layer 在这里变成空壳，循环结束或重新赋值时自动析构
-        // 此时，里面的 PolyTensor 已经被 consumed，析构安全。
+        // ==========================================================
+        // 【关键 3】动态阶数检查与降维打击 (主线程串行)
+        // 此时已退出 OMP 并发域。安全检查并触发多态降阶！
+        // ==========================================================
+        for (size_t i = 0; i < next_size; ++i) {
+            // 如果度数超标，立即阻断！
+            if (next_layer[i].degree >= MVZK_CONFIG_MULT_PRODUCT_THRESHOLD) {
+                
+                //std::string check_name = "Dyn_Degree_Breaker_L" + std::to_string(current_size) + "_I" + std::to_string(i);
+                
+                // 触发多态接口：
+                // 内部会自动处理 Prover/Verifier 的不同行为，并调用 store_relation 强制零检查
+                // 返回的崭新 1 阶张量直接覆盖掉原来的高阶张量！
+                next_layer[i] = next_layer[i].refresh_degree();
+            }
+        }
+
+        // 【关键 4】交换 Buffer (Ping-Pong)
+        // 旧的 current_layer 变成空壳自动析构，next_layer 成为新一轮的输入
         current_layer = std::move(next_layer);
     }
 
