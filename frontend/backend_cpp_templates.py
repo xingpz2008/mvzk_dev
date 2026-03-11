@@ -463,7 +463,7 @@ int main(int argc, char** argv) {{
         strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", localtime(&stop_time_t));
         string safe_time_str(time_buf);
 
-        string log_dir = "log/"; 
+        string log_dir = model_dir + "/log/";
         system(("mkdir -p " + log_dir).c_str()); 
 
         string filename = log_dir + "report_{model_name}_" + role_str + "_" 
