@@ -403,6 +403,7 @@ public:
     virtual void check_all() = 0;
     virtual void submit_tensor_to_buffer(PolyTensor&& pt) = 0;
     virtual void submit_non_zero_tensor_to_buffer(const PolyTensor& target) = 0;
+    virtual void finalize_protocol() = 0;
     //virtual void submit_matmul_tensor_to_buffer(PolyTensor&& pt) = 0;
 
     // --- 1.2 输入与转换 ---

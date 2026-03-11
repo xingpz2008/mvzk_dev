@@ -283,7 +283,7 @@ int main(int argc, char** argv) {
              << output.shape[0] << ", " << output.shape[1] << ")" << endl;
 
         PolyTensor::store_self_relation(output, "VGG11_Final_Logits_Check");
-        exec->check_all();
+        exec->finalize_protocol();
         
 
         // --------------------------------------------------

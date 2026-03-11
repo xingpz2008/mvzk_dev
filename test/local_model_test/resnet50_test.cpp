@@ -305,7 +305,7 @@ int main(int argc, char** argv) {
              << output.shape[2] << ", " << output.shape[3] << ")" << endl;
 
         PolyTensor::store_self_relation(output, "ResNet50_Final_Logits_Check");
-        exec->check_all();
+        exec->finalize_protocol();
         
 
         // --------------------------------------------------

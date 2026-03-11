@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
 
         PolyTensor::store_self_relation(output, "VGG16_Final_Logits_Check");
 
-        exec->check_all();
+        exec->finalize_protocol();
 
 
         // --------------------------------------------------

@@ -57,8 +57,8 @@ public:
 
     virtual ~MVZKExecVerifier() {
         // 析构前强制检查剩余的 buffer
-        flush_all_luts();
-        check_all();
+        // flush_all_luts();
+        // check_all();
         if(vole) delete vole;
     }
 
@@ -155,9 +155,6 @@ public:
 
     void check_all() override {
 
-        flush_all_luts();
-        flush_all_range_checks();
-
         if (check_buffer.empty() && check_tensor_buffer.empty()) return;
 
         // 1. 生成并发送种子
@@ -214,6 +211,12 @@ public:
             }
         }
         final_checked_item.is_consumed = true;
+    }
+
+    void finalize_protocol() {
+        flush_all_luts();
+        flush_all_range_checks();
+        check_all(); 
     }
 
     // =========================================================

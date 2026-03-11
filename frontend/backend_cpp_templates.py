@@ -285,7 +285,7 @@ int main(int argc, char** argv) {{
         PolyTensor output = {model_name}_Forward(image, poly_weights, bitlen, digdec_k, do_truncation);
 
         PolyTensor::store_self_relation(output, "{model_name}_Final_Logits_Check");
-        exec->check_all();
+        exec->finalize_protocol();
         
         auto stop_zk = high_resolution_clock::now(); 
         time_t stop_time_t = system_clock::to_time_t(system_clock::now()); 
