@@ -1848,6 +1848,10 @@ public:
                             for(int d=0; d<=pt_in.degree; ++d) {
                                 pt_out.get_coeffs_ptr(d)[out_idx] = mult_mod(sum_coeffs[d], inv_area);
                             }
+                        } else {
+                            for(int d=0; d<=pt_in.degree; ++d) {
+                                pt_out.get_coeffs_ptr(d)[out_idx] = sum_coeffs[d];
+                            }
                         }
                     }
                 }

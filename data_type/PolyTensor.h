@@ -8,6 +8,7 @@
 #include <utility> 
 #include <cassert>
 #include <cstring> // 加上这个，因为 from_public 实现时需要 memcpy
+#include <iomanip>
 
 // 前向声明执行器
 class MVZKExec;
@@ -193,6 +194,41 @@ public:
     // ==========================================
     PolyTensor MatMul(const PolyTensor& rhs) const;
     friend PolyTensor MatMul(const PolyTensor& lhs, const PolyTensor& rhs);
+
+    // Debug function
+   
+
+    void print_poly_tensor(size_t limit = 25, const std::string& tag = "Debug") {
+        // 1. 调用你指定的函数获取最高阶系数块（真实值）
+        std::vector<uint64_t> vals = get_real_vals_vector();
+
+        // 2. 判别获得的是否为空（如果是 Verifier，flat_coeffs 为空，vals 也会为空）
+        if (vals.empty()) {
+            //std::cout << "\033[33m[" << tag << "] 角色判断: VERIFIER (Bob) - 无明文数据可打印。\033[0m" << std::endl;
+            return;
+        }
+
+        // 3. 打印元数据
+        std::cout << "\033[32m[" << tag << "] 角色判断: PROVER (Alice) | Shape: [";
+        for (size_t i = 0; i < this->shape.size(); ++i) {
+            std::cout << shape[i] << (i == shape.size() - 1 ? "" : ", ");
+        }
+        std::cout << "] | Total: " << this->total_elements << " | Degree: " << degree << "\033[0m" << std::endl;
+
+        // 4. 打印前 N 个值
+        size_t print_count = std::min((size_t)total_elements, limit);
+        std::cout << "  Values (first " << print_count << "): ";
+        
+        for (size_t i = 0; i < print_count; ++i) {
+            // 如果数值非常大（接近 Fp），通常说明是负数，这里直接打印原始 uint64
+            std::cout << vals[i] << (i == print_count - 1 ? "" : ", ");
+        }
+
+        if (total_elements > limit) {
+            std::cout << " ... (omitted)";
+        }
+        std::cout << std::endl << std::endl;
+    }
 };
 
 #endif

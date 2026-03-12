@@ -1473,6 +1473,8 @@ public:
                         }
                         if (back_to_sum_pool == false){
                             out_keys[out_idx] = mult_mod(sum_keys, inv_area);
+                        } else {
+                            out_keys[out_idx] = sum_keys;
                         }
                     }
                 }
