@@ -144,6 +144,12 @@ def fx_fold_batchnorm(model: nn.Module) -> GraphModule:
         print("\n" + "="*60)
         print("[CRITICAL ERROR] Model Tracing Failed!")
         print("="*60)
+        print("We detected dynamic control flow inside your model's forward() function.")
+        print("This is usually caused by data-dependent 'if' statements or 'for' loops.")
+        print("\nOur ZK Exporter strictly requires a STATIC computational graph.")
+        print("Please refactor your forward() pass or ensure the model architecture is static.")
+        print(f"\n[Detailed PyTorch Trace Error]:\n{e}")
+        print("="*60)
         sys.exit(1)
         
     modules = dict(traced_model.named_modules())
@@ -319,6 +325,8 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     zk_graph_ir.append(node_info)
                 else:
                     print(f"\n[CRITICAL ERROR] AdaptiveAvgPool2d with output_size={out_size} is detected!")
+                    print("The ZK C++ backend currently ONLY supports AdaptiveAvgPool2d when used as a Global Average Pooling (output_size=1).")
+                    print("Please modify your PyTorch model architecture.")
                     sys.exit(1)
 
             else:
@@ -380,15 +388,15 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
 # ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ZK-ML Model Exporter (AST-Secured)")
-    parser.add_argument('--vision_model', type=str, help="Name of torchvision model")
-    parser.add_argument('--custom_script', type=str, help="Path to your python model script")
-    parser.add_argument('--model_class', type=str, help="Class name in your script")
+    parser.add_argument('--vision_model', type=str, help="Name of torchvision model (e.g., resnet18)")
+    parser.add_argument('--custom_script', type=str, help="Path to your python model script (e.g., my_net.py)")
+    parser.add_argument('--model_class', type=str, help="Class name in your script (e.g., MyCustomNet)")
     parser.add_argument('--weights', type=str, help="Path to the .pth state_dict file", default=None)
     parser.add_argument('--out_dir', type=str, default=None, help="Optional specific output directory")
-    parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--channels', type=int, default=3)
-    parser.add_argument('--height', type=int, default=32)
-    parser.add_argument('--width', type=int, default=32)
+    parser.add_argument('--batch', type=int, default=1, help="Input batch size (Default: 1)")
+    parser.add_argument('--channels', type=int, default=3, help="Input channels (Default: 3)")
+    parser.add_argument('--height', type=int, default=32, help="Input height (Default: 32)")
+    parser.add_argument('--width', type=int, default=32, help="Input width (Default: 32)")
     
     args = parser.parse_args()
     model = None
@@ -424,10 +432,11 @@ if __name__ == "__main__":
         model = model_class() 
         model_name = args.model_class
     else:
-        print("[Error] Invalid arguments.")
+        print("[Error] Invalid arguments. Specify either --vision_model OR (--custom_script AND --model_class)")
         sys.exit(1)
 
     if args.weights:
+        print(f"Loading weights from {args.weights}...")
         model.load_state_dict(torch.load(args.weights, map_location='cpu'))
 
     print("\n[Step 1] Initializing Graph Optimization (BatchNorm Folding)...")
@@ -458,6 +467,7 @@ if __name__ == "__main__":
 
     pth_path = Path(final_out_dir) / "pytorch_weights.pth"
     torch.save(original_state_dict, pth_path)
+    print(f"  - PyTorch Native Weights saved to: {pth_path}")
 
     meta_data = {
         "model_name": model_name,
@@ -469,5 +479,5 @@ if __name__ == "__main__":
     meta_path = Path(final_out_dir) / "metadata.json"
     with open(meta_path, "w") as f:
         json.dump(meta_data, f, indent=4)
-    
+    print(f"  - \033[1;36mMetadata SSOT\033[0m saved to: {meta_path}")
     print("\033[1;32m[SUCCESS] Exporter Pipeline Completed Perfectly!\033[0m\n")
