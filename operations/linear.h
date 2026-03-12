@@ -47,7 +47,8 @@ PolyTensor Conv1D(
 PolyTensor AvgPool2D(PolyTensor& x, 
     int kernel_size, 
     int stride = -1, 
-    int padding = 0);
+    int padding = 0,
+    bool back_to_sum_pool = false);
 
 
 // last 4 parameters are public

@@ -16,8 +16,9 @@ CPP_API_MAP = {
     "relu": "PolyTensor {out_var} = ReLU({in_var}, bitlen, digdec_k, do_truncation);",
     "integrated_nl": "PolyTensor {out_var} = IntegratedNL({in_var}, {kernel_size}, {stride}, {padding}, bitlen, digdec_k, do_truncation);",
     "max_pool2d": "PolyTensor {out_var} = MaxPool2D({in_var}, {kernel_size}, {stride}, {padding}, bitlen, digdec_k);",
-    "avgpool2d": "PolyTensor {out_var} = AvgPool2D({in_var}, {kernel_size}, {stride}, {padding});",
-    "global_avg_pool2d": "PolyTensor {out_var} = AvgPool2D({in_var}, {in_var}.shape[2], 1, 0);",
+    "avgpool2d": "PolyTensor {out_var} = AvgPool2D({in_var}, {kernel_size}, {stride}, {padding}, false);",
+    "global_avg_pool2d": "PolyTensor {out_var} = AvgPool2D({in_var}, {in_var}.shape[2], 1, 0, false);",
+    "global_sum_pool2d": "PolyTensor {out_var} = AvgPool2D({in_var}, {in_var}.shape[2], 1, 0, true);",
     "func_add": "PolyTensor {out_var} = {in_var_0} + {in_var_1};",
     "func_sub": "PolyTensor {out_var} = {in_var_0} - {in_var_1};",
     "func_mul": "PolyTensor {out_var} = {in_var_0} * {in_var_1};",
@@ -357,7 +358,9 @@ int main(int argc, char** argv) {{
                          << expected_logits.size() << ").\\033[0m" << endl;
                     exit(-1);
                 }}
-                double mse = 0.0;
+                // ------------------ 请替换这一段 ------------------
+                double mse_unscaled = 0.0;
+                double mse_scaled = 0.0;
                 int match_count = 0;
                 size_t num_classes = raw_logits.size() / N; 
                 
@@ -398,13 +401,23 @@ int main(int argc, char** argv) {{
                         for(int s = 0; s < {final_scale_power}; ++s) {{
                             total_scale *= scale_factor;
                         }}
-                        double zk_val = (double)signed_val / total_scale;
                         
-                        double err = zk_val - pt_val;
-                        mse += err * err;
+                        // 1. 原始未除以面积的 ZK 值
+                        double zk_val_unscaled = (double)signed_val / total_scale;
+                        
+                        // 2. 动态除以面积的 ZK 值 (自动读取前端注入的 {pool_area})
+                        double zk_val_scaled = zk_val_unscaled / (double)({pool_area});
+                        
+                        // 分别累加误差
+                        double err_unscaled = zk_val_unscaled - pt_val;
+                        mse_unscaled += err_unscaled * err_unscaled;
+                        
+                        double err_scaled = zk_val_scaled - pt_val;
+                        mse_scaled += err_scaled * err_scaled;
 
-                        if (zk_val > zk_max) {{
-                            zk_max = zk_val;
+                        // 取最大值用于判别 Match 状态（这里用缩放后的结果比，逻辑更自洽）
+                        if (zk_val_scaled > zk_max) {{
+                            zk_max = zk_val_scaled;
                             zk_argmax = c;
                         }}
                         if (pt_val > pt_max) {{
@@ -415,9 +428,9 @@ int main(int argc, char** argv) {{
                         if (c < 15) {{
                             img_debug << left << setw(10) << c 
                                       << setw(22) << signed_val 
-                                      << setw(15) << fixed << setprecision(6) << zk_val 
+                                      << setw(15) << fixed << setprecision(6) << zk_val_scaled 
                                       << setw(15) << pt_val 
-                                      << abs(zk_val - pt_val) << "\\n";
+                                      << abs(zk_val_scaled - pt_val) << "\\n";
                         }}
                     }}
                     
@@ -434,17 +447,20 @@ int main(int argc, char** argv) {{
                     }}
                 }}
                 
-                mse /= raw_logits.size();
+                mse_unscaled /= raw_logits.size();
+                mse_scaled /= raw_logits.size();
 
                 align_stream << "\\n\\033[1;35m[====> GROUND TRUTH ALIGNMENT <====]\\033[0m\\n";
                 align_stream << "  - Oracle Answer Loaded : " << expected_bin_path << "\\n";
-                align_stream << "  - Mean Squared Error   : " << scientific << mse << fixed << "\\n";
+                align_stream << "  - MSE (Unscaled)       : " << scientific << mse_unscaled << fixed << "\\n";
+                align_stream << "  - MSE (Scaled)         : " << scientific << mse_scaled << fixed << "\\n";
                 if (match_count == N) {{
                     align_stream << "  - Classification       : \\033[1;32m[ MATCH! (" << match_count << "/" << N << ") ]\\033[0m\\n";
                 }} else {{
                     align_stream << "  - Classification       : \\033[1;31m[ MISMATCH! (" << match_count << "/" << N << ") ]\\033[0m\\n";
                 }}
                 align_stream << "=================================================\\n\\n";
+                // --------------------------------------------------
                 
                 // 打印对齐报告到终端，并将其保存到最终的日志字符串中
                 align_report_str = align_stream.str();

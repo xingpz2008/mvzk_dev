@@ -16,7 +16,8 @@ Key Features:
    (Fuses Conv2d + BatchNorm2d).
 4. ZK-specific optimization: Automatically identifies and fuses ReLU + MaxPool2d 
    into an `integrated_nl` operator.
-5. Industrial-grade security: Utilizes static AST analysis to intercept dangerous 
+5. Scale Folding Optimization: Automatically folds GlobalAvgPool divisors into Linear.
+6. Industrial-grade security: Utilizes static AST analysis to intercept dangerous 
    user script injections.
 
 Dependencies:
@@ -77,14 +78,12 @@ import sys
 import ast
 from pathlib import Path
 from datetime import datetime
+import copy
 
 # ==========================================
 # 1. AST Security Checker
 # ==========================================
 def is_script_safe_to_import(filepath: Path) -> tuple[bool, str]:
-    """
-    Static AST analysis to ensure no dangerous top-level execution exists.
-    """
     with open(filepath, 'r', encoding='utf-8') as f:
         code = f.read()
 
@@ -114,7 +113,7 @@ def is_script_safe_to_import(filepath: Path) -> tuple[bool, str]:
 
 
 # ==========================================
-# 2. BatchNorm Folding Logic & TRACING INTERCEPTOR
+# 2. Offline Graph Optimization Passes
 # ==========================================
 def fuse_conv_bn_eval(conv: nn.Conv2d, bn: nn.BatchNorm2d) -> nn.Conv2d:
     assert not (conv.training or bn.training), "Fusion only works in eval mode."
@@ -145,12 +144,6 @@ def fx_fold_batchnorm(model: nn.Module) -> GraphModule:
         print("\n" + "="*60)
         print("[CRITICAL ERROR] Model Tracing Failed!")
         print("="*60)
-        print("We detected dynamic control flow inside your model's forward() function.")
-        print("This is usually caused by data-dependent 'if' statements or 'for' loops.")
-        print("\nOur ZK Exporter strictly requires a STATIC computational graph.")
-        print("Please refactor your forward() pass or ensure the model architecture is static.")
-        print(f"\n[Detailed PyTorch Trace Error]:\n{e}")
-        print("="*60)
         sys.exit(1)
         
     modules = dict(traced_model.named_modules())
@@ -173,6 +166,74 @@ def fx_fold_batchnorm(model: nn.Module) -> GraphModule:
     traced_model.recompile()
     return traced_model
 
+def fx_fold_scale_avgpool_linear(model: GraphModule) -> GraphModule:
+    modules = dict(model.named_modules())
+    for node in model.graph.nodes:
+        if node.op == 'call_module' and isinstance(modules[node.target], nn.AdaptiveAvgPool2d):
+            target_mod = modules[node.target]
+            out_size = target_mod.output_size
+            
+            is_gap = (out_size == (1, 1) or out_size == 1 or out_size == [1, 1])
+            if not is_gap:
+                continue
+
+            can_fold = False
+            linear_node = None
+            curr_nodes = list(node.users.keys())
+            
+            while len(curr_nodes) == 1:
+                nxt = curr_nodes[0]
+                is_shape_op = False
+                
+                if nxt.op == 'call_function':
+                    fname = getattr(nxt.target, '__name__', str(nxt.target))
+                    if fname in ['flatten', 'reshape', 'squeeze']: is_shape_op = True
+                elif nxt.op == 'call_method':
+                    mname = str(nxt.target)
+                    if mname in ['flatten', 'view', 'reshape', 'squeeze']: is_shape_op = True
+                elif nxt.op == 'call_module' and isinstance(modules.get(nxt.target), nn.Flatten):
+                    is_shape_op = True
+                
+                if is_shape_op:
+                    curr_nodes = list(nxt.users.keys())
+                elif nxt.op == 'call_module' and isinstance(modules.get(nxt.target), nn.Linear):
+                    linear_node = nxt
+                    can_fold = True
+                    break
+                else:
+                    break 
+            
+            if can_fold:
+                area = 1.0
+                prev_node = node.args[0]
+                tensor_meta = prev_node.meta.get('tensor_meta')
+                
+                if tensor_meta is not None:
+                    if hasattr(tensor_meta, 'shape') and not isinstance(tensor_meta, torch.Size):
+                        in_shape = tensor_meta.shape
+                    elif isinstance(tensor_meta, (tuple, list)) and len(tensor_meta) > 0 and hasattr(tensor_meta[0], 'shape'):
+                        in_shape = tensor_meta[0].shape
+                    else:
+                        in_shape = tensor_meta 
+                    
+                    if hasattr(in_shape, '__len__') and len(in_shape) >= 4:
+                        area = float(in_shape[2] * in_shape[3])
+                
+                if area > 1.0:
+                    linear_mod = modules[linear_node.target]
+                    if not hasattr(linear_mod, '_folded_area'):
+                        print(f"[\033[1;32mScale Folding\033[0m] Scaling Bias of Linear '{linear_node.name}' by Area: {area}")
+                        
+                        # [核心修复] 绝对不能缩小 weight
+                        # 我们选择放大 Bias，并在 C++ 的最后环节除以 area 找齐
+                        if getattr(linear_mod, 'bias', None) is not None:
+                            linear_mod.bias.data = linear_mod.bias.data * area
+                        linear_mod._folded_area = area
+                        
+                        target_mod._folded_to_sum = True
+                        target_mod._pool_area = area # 记录面积，传递给 JSON
+                        
+    return model
 
 # ==========================================
 # 3. Graph Topology & Weights Exporter
@@ -206,7 +267,6 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                 prev_node = node.args[0]
                 is_fused = False
                 
-                # [BUG FIX] strict fusion check: ReLU must have EXACTLY 1 user (this MaxPool2d)
                 if prev_node.op == 'call_module' and isinstance(modules[prev_node.target], nn.ReLU) and len(prev_node.users) == 1:
                     is_fused = True
                     prev_prev_node = prev_node.args[0] 
@@ -226,7 +286,6 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     })
 
             elif isinstance(target_mod, (nn.Conv2d, nn.Linear)):
-                # 1. 处理带有权重和偏置的参数化算子 (Conv2d, Linear)
                 node_type = type(target_mod).__name__.lower()
                 node_info = {"name": node.name, "type": node_type, "inputs": [str(node.args[0])]}
                 
@@ -234,13 +293,11 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     node_info["stride"] = target_mod.stride
                     node_info["padding"] = target_mod.padding
                 
-                # 导出权重
                 if hasattr(target_mod, 'weight') and target_mod.weight is not None:
                     node_info["weight_shape"] = list(target_mod.weight.shape)
                     w_path = weights_dir / f"{node.name}_weight.bin"
                     target_mod.weight.detach().cpu().numpy().astype(np.float32).tofile(str(w_path))
                 
-                # 导出偏置
                 if hasattr(target_mod, 'bias') and target_mod.bias is not None:
                     node_info["bias_shape"] = list(target_mod.bias.shape)
                     b_path = weights_dir / f"{node.name}_bias.bin"
@@ -249,21 +306,19 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                 zk_graph_ir.append(node_info)
 
             elif isinstance(target_mod, nn.AdaptiveAvgPool2d):
-                # 2. 专项处理自适应池化层
                 out_size = target_mod.output_size
-                
-                # 判断是否为严格的全局平均池化 (1x1)
                 is_gap = (out_size == (1, 1) or out_size == 1 or out_size == [1, 1])
                 
                 if is_gap:
-                    # 将算子类型显式重命名为 global_avg_pool2d，方便 C++ 模板识别
-                    node_info = {"name": node.name, "type": "global_avg_pool2d", "inputs": [str(node.args[0])]}
+                    if getattr(target_mod, '_folded_to_sum', False):
+                        area_val = getattr(target_mod, '_pool_area', 1.0)
+                        # 将 area 写入 JSON
+                        node_info = {"name": node.name, "type": "global_sum_pool2d", "inputs": [str(node.args[0])], "pool_area": area_val}
+                    else:
+                        node_info = {"name": node.name, "type": "global_avg_pool2d", "inputs": [str(node.args[0])]}
                     zk_graph_ir.append(node_info)
                 else:
-                    # 防御性拦截：不支持非 1x1 的 AdaptiveAvgPool
                     print(f"\n[CRITICAL ERROR] AdaptiveAvgPool2d with output_size={out_size} is detected!")
-                    print("The ZK C++ backend currently ONLY supports AdaptiveAvgPool2d when used as a Global Average Pooling (output_size=1).")
-                    print("Please modify your PyTorch model architecture.")
                     sys.exit(1)
 
             else:
@@ -275,7 +330,7 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
                     "type": f"module_{module_type}", 
                     "inputs": [str(arg) for arg in node.args if isinstance(arg, Node)],
                     "status": "UNCHECKED",
-                    "param_shapes": {} # [FEATURE] Track shapes for unknown modules
+                    "param_shapes": {} 
                 }
                 
                 for param_name, param_tensor in target_mod.named_parameters():
@@ -289,13 +344,11 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
 
         elif node.op == 'call_function':
             func_name = node.target.__name__ if hasattr(node.target, '__name__') else str(node.target)
-            
             if func_name == "flatten":
                 zk_graph_ir.append({"name": node.name, "type": "flatten", "inputs": [str(node.args[0])]})
             else:
                 zk_graph_ir.append({
-                    "name": node.name,
-                    "type": f"func_{func_name}", 
+                    "name": node.name, "type": f"func_{func_name}", 
                     "inputs": [str(arg) for arg in node.args if isinstance(arg, Node)],
                     "args_const": [str(arg) for arg in node.args if not isinstance(arg, Node)],
                     "kwargs": {k: str(v) for k, v in node.kwargs.items()} 
@@ -305,10 +358,8 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
             method_name = str(node.target)
             tensor_input = node.args[0]
             other_args = [str(arg) for arg in node.args[1:] if not isinstance(arg, Node)]
-            
             zk_graph_ir.append({
-                "name": node.name,
-                "type": f"method_{method_name}", 
+                "name": node.name, "type": f"method_{method_name}", 
                 "inputs": [str(tensor_input)] if isinstance(tensor_input, Node) else [],
                 "method_args": other_args 
             })
@@ -322,8 +373,6 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
         json.dump(zk_graph_ir, f, indent=4)
         
     print(f"\n[Success] Model exported successfully to directory: {export_dir.resolve()}")
-    print(f"- Topology saved at: {json_path.resolve()}")
-    print(f"- Binary weights saved at: {weights_dir.resolve()}")
 
 
 # ==========================================
@@ -331,15 +380,15 @@ def export_zk_model(model: GraphModule, export_dir_str: str):
 # ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ZK-ML Model Exporter (AST-Secured)")
-    parser.add_argument('--vision_model', type=str, help="Name of torchvision model (e.g., vgg16_bn)")
-    parser.add_argument('--custom_script', type=str, help="Path to your python model script (e.g., my_net.py)")
-    parser.add_argument('--model_class', type=str, help="Class name in your script (e.g., MyCustomNet)")
+    parser.add_argument('--vision_model', type=str, help="Name of torchvision model")
+    parser.add_argument('--custom_script', type=str, help="Path to your python model script")
+    parser.add_argument('--model_class', type=str, help="Class name in your script")
     parser.add_argument('--weights', type=str, help="Path to the .pth state_dict file", default=None)
     parser.add_argument('--out_dir', type=str, default=None, help="Optional specific output directory")
-    parser.add_argument('--batch', type=int, default=1, help="Input batch size (Default: 1)")
-    parser.add_argument('--channels', type=int, default=3, help="Input channels (Default: 3)")
-    parser.add_argument('--height', type=int, default=32, help="Input height (Default: 32)")
-    parser.add_argument('--width', type=int, default=32, help="Input width (Default: 32)")
+    parser.add_argument('--batch', type=int, default=1)
+    parser.add_argument('--channels', type=int, default=3)
+    parser.add_argument('--height', type=int, default=32)
+    parser.add_argument('--width', type=int, default=32)
     
     args = parser.parse_args()
     model = None
@@ -354,18 +403,11 @@ if __name__ == "__main__":
         
     elif args.custom_script and args.model_class:
         script_path = Path(args.custom_script).resolve()
-        
-        print(f"Checking AST safety of {script_path.name}...")
         is_safe, msg = is_script_safe_to_import(script_path)
         if not is_safe:
             print(f"\n[SECURITY ALERT] Import Rejected!")
-            print(f"Reason: {msg}")
-            print("Please wrap any execution/training code inside 'if __name__ == \"__main__\":'")
             sys.exit(1)
             
-        print("AST safety check passed. Dynamically loading module...")
-        
-        # [FEATURE] Dynamic sys.path injection to resolve local dependencies
         script_dir = str(script_path.parent)
         if script_dir not in sys.path:
             sys.path.insert(0, script_dir)
@@ -375,7 +417,6 @@ if __name__ == "__main__":
         sys.modules["user_module"] = user_module
         spec.loader.exec_module(user_module)
         
-        # Cleanup sys.path (optional but good practice)
         if sys.path[0] == script_dir:
             sys.path.pop(0)
             
@@ -383,20 +424,30 @@ if __name__ == "__main__":
         model = model_class() 
         model_name = args.model_class
     else:
-        print("[Error] Invalid arguments. Specify either --vision_model OR (--custom_script AND --model_class)")
+        print("[Error] Invalid arguments.")
         sys.exit(1)
 
     if args.weights:
-        print(f"Loading weights from {args.weights}...")
         model.load_state_dict(torch.load(args.weights, map_location='cpu'))
 
     print("\n[Step 1] Initializing Graph Optimization (BatchNorm Folding)...")
     fused_net = fx_fold_batchnorm(model)
     
-# [FEATURE] Dynamic timestamped output directory generation
+    print("[Step 1.5] Propagating shapes for Scale Folding Engine...")
+    from torch.fx.passes.shape_prop import ShapeProp
+    try:
+        dummy_in = torch.randn(args.batch, args.channels, args.height, args.width)
+        ShapeProp(fused_net).propagate(dummy_in)
+    except Exception as e:
+        print(f"[Warning] Shape propagation failed: {e}")
+
+    original_state_dict = copy.deepcopy(model.state_dict())
+
+    print("[Step 1.6] Applying Scale Folding (AvgPool -> Linear)...")
+    fused_net = fx_fold_scale_avgpool_linear(fused_net)
+
     if args.out_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 直接定位到 emp-mvzk/generated_model
         base_dir = Path(__file__).resolve().parent.parent / "generated_model"
         final_out_dir = str(base_dir / f"{model_name}_{timestamp}")
     else:
@@ -406,10 +457,8 @@ if __name__ == "__main__":
     export_zk_model(fused_net, export_dir_str=final_out_dir)
 
     pth_path = Path(final_out_dir) / "pytorch_weights.pth"
-    torch.save(model.state_dict(), pth_path)
-    print(f"  - PyTorch Native Weights saved to: {pth_path}")
+    torch.save(original_state_dict, pth_path)
 
-    # [状态管理] 创建 SSOT 元数据，供下游所有脚本无缝调用
     meta_data = {
         "model_name": model_name,
         "N": args.batch,
@@ -421,5 +470,4 @@ if __name__ == "__main__":
     with open(meta_path, "w") as f:
         json.dump(meta_data, f, indent=4)
     
-    print(f"  - \033[1;36mMetadata SSOT\033[0m saved to: {meta_path}")
     print("\033[1;32m[SUCCESS] Exporter Pipeline Completed Perfectly!\033[0m\n")

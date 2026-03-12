@@ -1802,7 +1802,7 @@ public:
     }
 
 
-    PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding) override {
+    PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding, bool back_to_sum_pool) override {
         int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
         int H_out = (H_in + 2 * padding - kernel_size) / stride + 1;
         int W_out = (W_in + 2 * padding - kernel_size) / stride + 1;
@@ -1844,8 +1844,10 @@ public:
                         }
 
                         // 最后统一乘以模逆元（除法操作）
-                        for(int d=0; d<=pt_in.degree; ++d) {
-                            pt_out.get_coeffs_ptr(d)[out_idx] = mult_mod(sum_coeffs[d], inv_area);
+                        if (back_to_sum_pool == false){
+                            for(int d=0; d<=pt_in.degree; ++d) {
+                                pt_out.get_coeffs_ptr(d)[out_idx] = mult_mod(sum_coeffs[d], inv_area);
+                            }
                         }
                     }
                 }

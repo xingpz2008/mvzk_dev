@@ -1438,7 +1438,7 @@ public:
         return X_max_out;
     }
 
-    PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding) override {
+    PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding, bool back_to_sum_pool) override {
         int N = pt_in.shape[0], C = pt_in.shape[1], H_in = pt_in.shape[2], W_in = pt_in.shape[3];
         int H_out = (H_in + 2 * padding - kernel_size) / stride + 1;
         int W_out = (W_in + 2 * padding - kernel_size) / stride + 1;
@@ -1471,8 +1471,9 @@ public:
                                 }
                             }
                         }
-                        
-                        out_keys[out_idx] = mult_mod(sum_keys, inv_area);
+                        if (back_to_sum_pool == false){
+                            out_keys[out_idx] = mult_mod(sum_keys, inv_area);
+                        }
                     }
                 }
             }

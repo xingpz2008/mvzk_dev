@@ -616,6 +616,16 @@ public:
         const PolyTensor& weight, 
         const PolyTensor& bias
     ) {
+        /*
+        // Debug Section
+        if (input.flat_coeffs.empty() == false){
+            std::vector<uint64_t> debug_val = input.get_real_vals_vector();
+            for (int i = 0; i < debug_val.size(); i++){
+                cout << debug_val[i] << ", " << endl;
+            }
+        }
+            */
+
         // 1. 维度检查与 Reshape
         if (weight.shape.size() != 2) {
             LOG_ERROR("Linear weight must be 2D (Out, In)");
@@ -774,7 +784,7 @@ public:
     [[deprecated("WARNING: DO NOT USE Standalone BatchNorm2D. Please use offline Conv-BN folding instead.")]]
     virtual PolyTensor batchnorm2d(PolyTensor& pt_in, const std::vector<uint64_t>& A, const std::vector<uint64_t>& B) = 0;
 
-    virtual PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding) = 0;
+    virtual PolyTensor avgpool2d(PolyTensor& pt_in, int kernel_size, int stride, int padding, bool back_to_sum_pool) = 0;
 
     // =========================================================================
     // Part 5: Non-linear Operation Section

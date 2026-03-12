@@ -54,7 +54,7 @@ PolyTensor Conv1D(
     return MVZKExec::mvzk_exec->conv1d(input, weight, bias, stride, padding, dilation);
 }
 
-PolyTensor AvgPool2D(PolyTensor& x, int kernel_size, int stride, int padding) {
+PolyTensor AvgPool2D(PolyTensor& x, int kernel_size, int stride, int padding, bool back_to_sum_pool) {
     if (!MVZKExec::mvzk_exec) {
         LOG_ERROR(" MVZKExec not initialized!");
         exit(-1);
@@ -63,7 +63,7 @@ PolyTensor AvgPool2D(PolyTensor& x, int kernel_size, int stride, int padding) {
     if (stride == -1) {
         stride = kernel_size;
     }
-    return MVZKExec::mvzk_exec->avgpool2d(x, kernel_size, stride, padding);
+    return MVZKExec::mvzk_exec->avgpool2d(x, kernel_size, stride, padding, back_to_sum_pool);
 }
 
 [[deprecated("WARNING: DO NOT USE Standalone BatchNorm2D. Please use offline Conv-BN folding instead.")]]

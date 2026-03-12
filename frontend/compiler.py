@@ -124,7 +124,7 @@ def generate_cpp_code(graph_data, model_name):
             out_scale = scale_map.get(in_var_0, 1) + 1
         elif n_type == "relu":
             out_scale = 1 # 截断阀门，压回 1S
-        elif n_type in ["max_pool2d", "avgpool2d", "global_avg_pool2d", "flatten"]:
+        elif n_type in ["max_pool2d", "avgpool2d", "global_avg_pool2d", "flatten", "global_sum_pool2d"]:
             out_scale = scale_map.get(in_var_0, 1) # 直接继承上一层的 Scale
         elif n_type == "func_add":
             s0 = scale_map.get(in_var_0, 1)
@@ -220,6 +220,13 @@ if __name__ == "__main__":
 
     code_sections = generate_cpp_code(graph_data, args.model_name)
     
+    # [新增] 动态提取图里的 pool_area 传递给 C++ 模板
+    dynamic_pool_area = 1.0
+    for node in graph_data:
+        if node.get("type") == "global_sum_pool2d" and "pool_area" in node:
+            dynamic_pool_area = float(node["pool_area"])
+            break
+
     # 将元数据尺寸注入到 C++ 模板中
     code_sections.update({
         "model_name": args.model_name,
@@ -227,7 +234,8 @@ if __name__ == "__main__":
         "N": meta["N"],
         "C": meta["C"],
         "H": meta["H"],
-        "W": meta["W"]
+        "W": meta["W"],
+        "pool_area": dynamic_pool_area  # <--- 动态传入模板！
     })
 
     # Fill templates

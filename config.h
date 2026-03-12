@@ -12,8 +12,8 @@
 // 2. Base Cryptography & Data Representation (基础密码学与数据表示)
 // =================================================================
 static constexpr char fix_key[] = "\x61\x7e\x8d\xa2\xa0\x51\x1e\x96\x5e\x41\xc2\x9b\x15\x3f\xc7\x7a";
-#define MVZK_CONFIG_SCALE 12
-#define MVZK_CONFIG_DEFAULT_BITLEN 32
+#define MVZK_CONFIG_SCALE 16
+#define MVZK_CONFIG_DEFAULT_BITLEN 44
 
 // =================================================================
 // 3. Machine Learning Model & Non-Linear Ops (机器学习模型与非线性算子)
