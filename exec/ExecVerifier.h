@@ -1750,12 +1750,17 @@ public:
 
         if (mine.degree != hers.degree){
             LOG_ERROR("Inconsistent degree for verification! Mine = " << mine.degree << ", hers = " << hers.degree);
-            return false; 
+            return false;
+        }
+
+        if (hers.coeffs.back() != 0) {
+            LOG_ERROR("ZK Zero-Check Failed! The accumulated constraint evaluates to " << hers.coeffs.back() << " instead of 0!");
+            return false;
         }
 
         // If the two condition passed, we calculate.
         uint64_t res = 0;
-        for (int i = 0; i < hers.coeffs.size(); i++){
+        for (int i = 0; i < hers.coeffs.size() - 1; i++){
             res = add_mod(res, mult_mod(hers.coeffs[i], delta_pow(this->delta, i)));
         }
         if (res != mine.key){
@@ -2007,6 +2012,20 @@ protected:
     void accumulate_tensor_buffer(PolyDelta& final_item) override {
         if (check_tensor_buffer.empty()) return;
 
+        // 1. 【新增】扫描寻找全局最大阶数
+        int max_deg = final_item.degree;
+        for (auto& tensor : check_tensor_buffer) {
+            max_deg = std::max(max_deg, tensor.degree);
+        }
+
+        // 2. 【新增】将已有的 final_item 拔高对齐
+        // Verifier 的拔高对齐 = 乘以 Delta 的 offset_diff 次方
+        if (final_item.degree < max_deg) {
+            int offset_diff = max_deg - final_item.degree;
+            final_item.key = mult_mod(final_item.key, delta_pow(this->delta, offset_diff));
+            final_item.degree = max_deg;
+        }
+
         for (auto& tensor : check_tensor_buffer) {
             size_t len = tensor.total_elements;
             
@@ -2018,9 +2037,6 @@ protected:
             for(size_t i=0; i<len; ++i) {
                 chi_vec[i] = chi_vec[i] % PR; 
             }
-
-            // 更新 final_item 的阶数
-            final_item.degree = std::max(final_item.degree, tensor.degree);
 
             // =========================================================
             // 2. 【Verifier核心修改】累加 Keys (手动并行归约)
@@ -2053,7 +2069,13 @@ protected:
                 }
             }
 
-            final_item.key = add_mod(final_item.key, sum_key);
+            // 【核心修复】：计算当前约束需要的移位量 (Offset)
+            int offset = max_deg - tensor.degree;
+            
+            // 【核心修复】：当前约束的 Key 必须乘以 Delta^offset 才能安全加入大池子，与 Prover 完美对齐
+            uint64_t shifted_key = mult_mod(sum_key, delta_pow(this->delta, offset));
+            final_item.key = add_mod(final_item.key, shifted_key);
+            
             tensor.is_consumed = true;
         }
         check_tensor_buffer.clear();

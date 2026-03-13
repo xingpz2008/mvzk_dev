@@ -2334,32 +2334,44 @@ protected:
     void accumulate_tensor_buffer(PolyDelta& final_item) override {
         if (check_tensor_buffer.empty()) return;
 
+        if (final_item.coeffs.empty()) {
+            final_item.coeffs.resize(final_item.degree + 1, 0);
+        }
+
+        // 1. 【新增】扫描寻找全局最大阶数
+        int max_deg = final_item.degree;
+        for (auto& tensor : check_tensor_buffer) {
+            max_deg = std::max(max_deg, tensor.degree);
+        }
+
+        // 2. 【新增】将已有的 final_item 拔高对齐
+        if (final_item.degree < max_deg) {
+            int offset_diff = max_deg - final_item.degree;
+            std::vector<uint64_t> new_coeffs(max_deg + 1, 0);
+            for (size_t i = 0; i <= final_item.degree; ++i) {
+                new_coeffs[i + offset_diff] = final_item.coeffs[i];
+            }
+            final_item.coeffs = std::move(new_coeffs);
+            final_item.degree = max_deg;
+        }
+
+        // 3. 遍历 Tensor 进行累加
         for (auto& tensor : check_tensor_buffer) {
             size_t len = tensor.total_elements;
             
-            // 1. 生成随机数 (保持不变)
             std::vector<uint64_t> chi_vec(len);
             this->prg.random_data(chi_vec.data(), len * sizeof(uint64_t));
 
-            // 随机数取模 (并行化，保持不变)
             #pragma omp parallel for if(len >= MVZK_OMP_SIZE_THRESHOLD && !omp_in_parallel())
             for(size_t i=0; i<len; ++i) {
                 chi_vec[i] = chi_vec[i] % PR; 
             }
 
-            // 2. 动态扩容 final_item (保持不变)
-            if (final_item.degree < tensor.degree) {
-                final_item.coeffs.resize(tensor.degree + 1, 0);
-                final_item.degree = tensor.degree;
-            }
+            // 【核心修复】：计算当前约束需要的移位量 (Offset)
+            // 这保证了当前 tensor 的最高阶 tensor.degree 一定会被加到 max_deg 上！
+            int offset = max_deg - tensor.degree;
 
-            // =========================================================
-            // 3. 【Prover核心修改】累加 Real Values (手动并行归约)
-            // =========================================================
-
-            // =========================================================
-            // 4. 【Prover核心修改】累加 Coefficients (同样应用并行归约)
-            // =========================================================
+            // 注意：这里必须是 <=，我们要包含明文！
             for (int d = 0; d <= tensor.degree; ++d) {
                 const uint64_t* coeff_ptr = tensor.get_coeffs_ptr(d);
                 uint64_t sum_coeff = 0;
@@ -2384,7 +2396,9 @@ protected:
                         sum_coeff = add_mod(sum_coeff, term);
                     }
                 }
-                final_item.coeffs[d] = add_mod(final_item.coeffs[d], sum_coeff);
+                
+                // 【核心修复】：加上 offset！
+                final_item.coeffs[d + offset] = add_mod(final_item.coeffs[d + offset], sum_coeff);
             }
 
             tensor.is_consumed = true;

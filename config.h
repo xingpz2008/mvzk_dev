@@ -6,7 +6,7 @@
 // =================================================================
 #define MVZK_CONFIG_THREADS_NUM 1
 #define MVZK_CONFIG_DEFAULT_LEVEL_INFO LEVEL_ERROR
-#define MVZK_CONFIG_INSTANT_ABORT false
+#define MVZK_CONFIG_INSTANT_ABORT true
 
 // =================================================================
 // 2. Base Cryptography & Data Representation (基础密码学与数据表示)
