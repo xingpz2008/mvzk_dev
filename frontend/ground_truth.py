@@ -104,18 +104,31 @@ def generate_ground_truth(args):
 
     model.eval()
 
-    # 2. Load the precise extracted weights
-    print(f"[2] Loading precise extracted weights from: {args.weights_pth}")
+    # =================================================================
+    # [步骤调换] 先加载真实的测试输入数据！
+    # =================================================================
+    print(f"[2] Loading input tensor from: {args.input_npy}")
+    input_np = np.load(args.input_npy)
+    input_tensor = torch.from_numpy(input_np).float()
+    print(f"    -> Input shape: {list(input_tensor.shape)}")
+
+    # =================================================================
+    # [核心补丁] 用真实的 input_tensor 触发网络结构的自适应重塑
+    # =================================================================
+    try:
+        from extractor import auto_fold_adaptive_pool_and_linear
+        auto_fold_adaptive_pool_and_linear(model, input_tensor)
+    except ImportError:
+        print("[WARNING] extractor.py not found, skipping adaptive pool folding.")
+
+    # =================================================================
+    # [加载权重] 现在的 model 已经完美变形，可以接住压缩后的权重了！
+    # =================================================================
+    print(f"[3] Loading precise extracted weights from: {args.weights_pth}")
     try:
         model.load_state_dict(torch.load(args.weights_pth, map_location='cpu'))
     except Exception as e:
         raise RuntimeError(f"Failed to load weights. Error: {e}")
-
-    # 3. Load the test input tensor
-    print(f"[3] Loading input tensor from: {args.input_npy}")
-    input_np = np.load(args.input_npy)
-    input_tensor = torch.from_numpy(input_np).float()
-    print(f"    -> Input shape: {list(input_tensor.shape)}")
 
     # 4. Execute the plaintext PyTorch forward pass
     print("[4] Running PyTorch Native Forward Pass...")

@@ -23,6 +23,8 @@ CPP_API_MAP = {
     "func_sub": "PolyTensor {out_var} = {in_var_0} - {in_var_1};",
     "func_mul": "PolyTensor {out_var} = {in_var_0} * {in_var_1};",
     "flatten": "PolyTensor {out_var} = {in_var}.flatten();",
+    "module_identity": "PolyTensor {out_var} = {in_var}.clone();\n    {in_var}.mark_consumed();",
+    "module_dropout": "PolyTensor {out_var} = {in_var}.clone();\n    {in_var}.mark_consumed();",
     "unknown": "// [WARNING] Unmapped operation: {node_type} for {out_var}"
 }
 

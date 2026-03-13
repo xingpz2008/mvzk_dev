@@ -124,7 +124,7 @@ def generate_cpp_code(graph_data, model_name):
             out_scale = scale_map.get(in_var_0, 1) + 1
         elif n_type == "relu":
             out_scale = 1 # 截断阀门，压回 1S
-        elif n_type in ["max_pool2d", "avgpool2d", "global_avg_pool2d", "flatten", "global_sum_pool2d"]:
+        elif n_type in ["max_pool2d", "avgpool2d", "global_avg_pool2d", "flatten", "global_sum_pool2d", "module_identity", "module_dropout"]:
             out_scale = scale_map.get(in_var_0, 1) # 直接继承上一层的 Scale
         elif n_type == "func_add":
             s0 = scale_map.get(in_var_0, 1)

@@ -135,6 +135,107 @@ def fuse_conv_bn_eval(conv: nn.Conv2d, bn: nn.BatchNorm2d) -> nn.Conv2d:
     fused_conv.bias.data = (b_conv - mu) * scale + beta
     return fused_conv
 
+def auto_fold_adaptive_pool_and_linear(model: nn.Module, dummy_input: torch.Tensor):
+    """
+    通用的 ZK-ML 架构适配器 (VGG/AlexNet 终结者)
+    自动处理老旧模型中 AdaptiveAvgPool2d 带来的静态图生成崩溃问题。
+    """
+    avgpool_module = None
+    linear_module = None
+    linear_parent = None
+    linear_idx = -1
+    model.eval()
+
+    # 1. 寻找池化层和全连接层
+    for name, module in model.named_modules():
+        if isinstance(module, nn.AdaptiveAvgPool2d):
+            avgpool_module = module
+            break
+            
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            linear_module = module
+            parent_name = name.rsplit('.', 1)[0] if '.' in name else ''
+            if parent_name:
+                linear_parent = model.get_submodule(parent_name)
+                linear_idx = int(name.rsplit('.', 1)[1])
+            break
+
+    if avgpool_module is None or linear_module is None:
+        return # 现代模型(如 ResNet) 或者没有池化的模型，直接放行
+
+    # 2. 动态探针：获取到达 AvgPool 之前的实际特征图大小
+    features_before_pool = None
+    def hook_fn(m, inp, out):
+        nonlocal features_before_pool
+        features_before_pool = inp[0].shape
+
+    handle = avgpool_module.register_forward_hook(hook_fn)
+    with torch.no_grad():
+        model(dummy_input)
+    handle.remove()
+
+    _, C, H_in, W_in = features_before_pool
+    target_size = avgpool_module.output_size
+    if isinstance(target_size, int): target_size = (target_size, target_size)
+
+    # 3. 核心分发逻辑
+    # 如果目标输出是 1x1 (比如 ResNet)，我们绝对不碰它，留给后续的 fx_fold_scale_avgpool_linear 处理！
+    if target_size[0] == 1:
+        return 
+
+    # ---------------------------------------------------------
+    # 情况 A: 输入已经是 1x1, 但模型非要输出 7x7 (例如 VGG 跑 32x32)
+    # 动作: 执行“权重折叠”魔法，保留预训练精度！
+    # ---------------------------------------------------------
+    if H_in == 1 and W_in == 1 and target_size[0] > 1:
+        print(f"\n[\033[1;35mZK-Adapter\033[0m] Detected Architecture Mismatch (1x1 -> {target_size[0]}x{target_size[0]}). Triggering SILKY WEIGHT FOLDING...")
+        
+        old_weight = linear_module.weight.data
+        old_bias = linear_module.bias.data if linear_module.bias is not None else None
+        out_features, in_features = old_weight.shape
+        S = target_size[0]
+        
+        if in_features == C * S * S:
+            print(f"  > Compressing Pretrained Weights: [{out_features}, {in_features}] -> [{out_features}, {C}]")
+            reshaped_weight = old_weight.view(out_features, C, S, S)
+            folded_weight = reshaped_weight.sum(dim=(2, 3)) # 49变1
+            
+            new_linear = nn.Linear(C, out_features, bias=(old_bias is not None))
+            new_linear.weight.data = folded_weight
+            if old_bias is not None:
+                new_linear.bias.data = old_bias
+                
+            if linear_parent is not None:
+                linear_parent[linear_idx] = new_linear
+
+    # ---------------------------------------------------------
+    # 情况 B: 输入是 7x7, 模型也输出 7x7 (例如 VGG 跑 224x224)
+    # 动作: 这是一个毫无意义的 Identity 层，直接删掉，防止 JSON 导出器误报 CRITICAL ERROR！
+    # ---------------------------------------------------------
+    elif H_in == target_size[0] and W_in == target_size[1]:
+        print(f"\n[\033[1;35mZK-Adapter\033[0m] Redundant AdaptiveAvgPool2d ({target_size[0]}x{target_size[0]}) detected. Stripping it from graph...")
+    
+    else:
+        # 其他奇葩分辨率 (比如输入变成了 2x2, 强转 7x7)，属于未定义行为，交给原生流程去报错
+        return
+
+    # 收尾：把惹祸的 AdaptiveAvgPool2d 替换为 Identity
+    # 收尾：把惹祸的 AdaptiveAvgPool2d 替换为 Identity
+    for name, module in model.named_modules():
+        if module is avgpool_module:
+            if '.' in name:
+                # 针对有层级的模块，例如 "features.14"
+                parent_name, attr_name = name.rsplit('.', 1)
+                parent = model.get_submodule(parent_name)
+            else:
+                # 针对顶层模块，例如 "avgpool"
+                attr_name = name
+                parent = model
+                
+            setattr(parent, attr_name, nn.Identity())
+            break
+
 def fx_fold_batchnorm(model: nn.Module) -> GraphModule:
     model.eval()
     
@@ -439,7 +540,9 @@ if __name__ == "__main__":
         print(f"Loading weights from {args.weights}...")
         model.load_state_dict(torch.load(args.weights, map_location='cpu'))
 
-    print("\n[Step 1] Initializing Graph Optimization (BatchNorm Folding)...")
+    print("\n[Step 1] Initializing Graph Optimization...")
+    dummy_in = torch.randn(args.batch, args.channels, args.height, args.width)
+    auto_fold_adaptive_pool_and_linear(model, dummy_in)
     fused_net = fx_fold_batchnorm(model)
     
     print("[Step 1.5] Propagating shapes for Scale Folding Engine...")
