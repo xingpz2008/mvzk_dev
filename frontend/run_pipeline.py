@@ -107,8 +107,8 @@ if __name__ == "__main__":
     
     print(f"Generated C++ files are located at: {C_YELLOW}{rel_model_dir}{C_RESET}")
     print(f"\nNext Steps:")
-    print(f"1. cd ../build && cmake .. -DTEST_SELECT=GEN && make -j")
-    # [极简命令] 现在只需要传入一个相对的主目录路径即可！
-    print(f"2. cd ../generated_model/{folder_name}")
-    print(f"3. ./{model_name}_test 1 12345 .")
+    print(f"1. cd ../build")
+    print(f"2. cmake .. -DTEST_SELECT=GEN && make -j")
+    print(f"3. cd ../generated_model/{folder_name}")
+    print(f"4. ./{model_name}_test 1 12345 .")
     print(f"   ./{model_name}_test 2 12345 .\n")

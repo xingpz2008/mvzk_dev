@@ -29,7 +29,8 @@ inline std::vector<uint64_t> load_raw_data_from_bin(
     const std::vector<int>& shape, 
     const std::string& filepath, 
     TensorDataType dtype = TensorDataType::FP32,
-    bool double_scale = false) 
+    bool double_scale = false,
+    bool is_public = false) 
 {
     // 1. Calculate the flattened size of the tensor
     size_t total_size = 1;
@@ -39,10 +40,10 @@ inline std::vector<uint64_t> load_raw_data_from_bin(
     std::vector<uint64_t> data(total_size, 0);
 
     // 3. Only Prover (Alice) reads from the hard drive
-    if (party == ALICE) {
+    if (party == ALICE || is_public) {
         std::ifstream file(filepath, std::ios::binary);
         if (!file.is_open()) {
-            throw std::runtime_error("[ERROR] Prover cannot open weight file: " + filepath);
+            throw std::runtime_error("[ERROR] Cannot open weight file: " + filepath);
         }
 
         // --- Branch A: Handle unquantized floats ---

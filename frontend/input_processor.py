@@ -66,8 +66,6 @@ def process_and_save_input(args):
         print(f"\033[33m[WARNING] metadata.json not found in parents of {target_dir}. Using default arguments.\033[0m")
     
     tensor_shape = (args.batch, args.channels, args.height, args.width)
-
-    tensor_shape = (args.batch, args.channels, args.height, args.width)
     labels_tensor = None 
     
     # ==========================================

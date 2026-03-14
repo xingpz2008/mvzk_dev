@@ -92,8 +92,9 @@ def generate_cpp_code(graph_data, model_name):
             poly_fields.append(f"{tab}PolyTensor {n_name}_w;")
             
             # Use load_raw_data_from_bin (as designed in tensor_loader.h)
-            load_stmts.append(f"{tab}hw.{n_name}_w = load_raw_data_from_bin(party, {w_shape}, bin_dir + \"/{n_name}_weight.bin\");")
-            inject_stmts.append(f"{tab}pw.{n_name}_w = exec->input({w_shape}, hw.{n_name}_w);")
+            # 引入 C++ 宏 MVZK_CONFIG_NN_PUBLIC_WEIGHT 动态控制
+            load_stmts.append(f"{tab}hw.{n_name}_w = load_raw_data_from_bin(party, {w_shape}, bin_dir + \"/{n_name}_weight.bin\", TensorDataType::FP32, false, MVZK_CONFIG_NN_PUBLIC_WEIGHT);")
+            inject_stmts.append(f"{tab}pw.{n_name}_w = MVZK_CONFIG_NN_PUBLIC_WEIGHT ? PolyTensor::from_public({w_shape}, hw.{n_name}_w) : exec->input({w_shape}, hw.{n_name}_w);")
             
             # Handle bias dynamically (some layers might be bias=False)
             if "bias_shape" in node:
@@ -106,8 +107,9 @@ def generate_cpp_code(graph_data, model_name):
                 is_bias_str = "true" if needs_double_scale else "false"
                 
                 # 在加载函数中传入 TensorDataType::FP32 以及 is_bias_str
-                load_stmts.append(f"{tab}hw.{n_name}_b = load_raw_data_from_bin(party, {b_shape}, bin_dir + \"/{n_name}_bias.bin\", TensorDataType::FP32, {is_bias_str});")
-                inject_stmts.append(f"{tab}pw.{n_name}_b = exec->input({b_shape}, hw.{n_name}_b);")
+                # 同样把 MVZK_CONFIG_NN_PUBLIC_WEIGHT 宏传进去
+                load_stmts.append(f"{tab}hw.{n_name}_b = load_raw_data_from_bin(party, {b_shape}, bin_dir + \"/{n_name}_bias.bin\", TensorDataType::FP32, {is_bias_str}, MVZK_CONFIG_NN_PUBLIC_WEIGHT);")
+                inject_stmts.append(f"{tab}pw.{n_name}_b = MVZK_CONFIG_NN_PUBLIC_WEIGHT ? PolyTensor::from_public({b_shape}, hw.{n_name}_b) : exec->input({b_shape}, hw.{n_name}_b);")
             else:
                 inject_stmts.append(f"{tab}pw.{n_name}_b = PolyTensor();")
                 

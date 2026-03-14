@@ -168,7 +168,7 @@ string strip_ansi(const string& input) {{
 string format_base_report(const string& model_name, int party, int N, int C, int H, int W, 
                        uint64_t bitlen, uint64_t digdec_k, bool do_truncation, 
                        int num_threads, int omp_threads, uint64_t net_io_counter_start, uint64_t net_io_counter_end, 
-                       const string& start_time_str, const string& stop_time_str, long long total_ms) {{
+                       const string& start_time_str, const string& stop_time_str, long long total_ms, long long prep_time) {{
     
     long long h  = total_ms / 3600000;
     long long m  = (total_ms % 3600000) / 60000;
@@ -207,14 +207,26 @@ string format_base_report(const string& model_name, int party, int N, int C, int
     oss << "  - MVZK_CONFIG_TENSOR_CHK_CNT   : " << MVZK_CONFIG_TENSOR_CHECK_CNT << "\\n";
     oss << "  - MVZK_CONFIG_RANGE_CHK_BUF    : " << MVZK_CONFIG_RANGE_CHECK_REQUEST_BUFFER_THRESHOLD << "\\n";
     oss << "  - MVZK_CONFIG_MULT_PRODUCT_THR : " << MVZK_CONFIG_MULT_PRODUCT_THRESHOLD << "\\n";
+    oss << "  - MVZK_CONFIG_NN_PUBLIC_INPUT  : " << (MVZK_CONFIG_NN_PUBLIC_INPUT ? "Yes" : "No") << "\\n";
+    oss << "  - MVZK_CONFIG_NN_PUBLIC_WEIGHT : " << (MVZK_CONFIG_NN_PUBLIC_WEIGHT ? "Yes" : "No") << "\\n";
 
     oss << "\\n[Execution Time]\\n";
     oss << "  - Start Time   : " << start_time_str << "\\n";
     oss << "  - End Time     : " << stop_time_str << "\\n";
-    oss << "  - Total Time   : ";
+    
+    long long p_h  = prep_time / 3600000;
+    long long p_m  = (prep_time % 3600000) / 60000;
+    long long p_s  = (prep_time % 60000) / 1000;
+    long long p_ms = prep_time % 1000;
+    oss << "  - Prep Time    : ";
+    if (p_h > 0) oss << p_h << "h ";
+    if (p_m > 0 || p_h > 0) oss << p_m << "m ";
+    oss << p_s << "s " << p_ms << "ms  (" << prep_time << " ms)\\n";
+
+    oss << "  - ZK Execute Time  : ";
     if (h > 0) oss << h << "h ";
     if (m > 0 || h > 0) oss << m << "m ";
-    oss << s << "s " << ms << "ms\\n";
+    oss << s << "s " << ms << "ms  (" << total_ms << " ms)\\n";
     
     oss << "\\n[Communication]\\n";
     oss << "  - Data Sent    : " << fixed << setprecision(2) << total_comm_mb << " MB";
@@ -257,6 +269,11 @@ int main(int argc, char** argv) {{
     cout << "Role: " << (party == PARTY_PROVER ? "PROVER" : "VERIFIER") << endl;
     cout << "=================================================" << endl;
 
+    if (checkSysSettings() == false) {{
+        cout << "[ERROR] System settings check failed." << endl;
+        exit(-1);
+    }}
+
     int num_threads = MVZK_CONFIG_THREADS_NUM;
     int omp_threads = omp_get_max_threads(); 
 
@@ -265,38 +282,64 @@ int main(int argc, char** argv) {{
         io_arr[i] = new NetIO(party == PARTY_PROVER ? nullptr : "127.0.0.1", port + i);
     }}
 
+    auto prep_start = high_resolution_clock::now();
+
     MVZKExec *exec = nullptr;
     if (party == PARTY_PROVER) exec = new MVZKExecProver<NetIO>(io_arr);
     else exec = new MVZKExecVerifier<NetIO>(io_arr);
 
+    auto prep_end = high_resolution_clock::now();
+    long long prep_time = duration_cast<milliseconds>(prep_end - prep_start).count();
+
     try {{
-        cout << "\\n[TEST] Phase 1: Offline Loading Weights and Inputs from Disk (NOT TIMED)..." << endl;
+        cout << "\\n[TEST] Phase 1: Loading Weights and Inputs from Disk ..." << endl;
         {model_name}HostWeights host_weights = load_{model_name_lower}_host_weights(party, bin_dir);
-        std::vector<uint64_t> host_input_data = load_raw_data_from_bin(party, {{N, C, H, W}}, input_bin_path);
+        std::vector<uint64_t> host_input_data = load_raw_data_from_bin(party, {{N, C, H, W}}, input_bin_path, TensorDataType::FP32, false, MVZK_CONFIG_NN_PUBLIC_INPUT);
 
         uint64_t net_io_start = comm(io_arr, num_threads);
-        auto start_zk = high_resolution_clock::now(); 
         time_t start_time_t = system_clock::to_time_t(system_clock::now()); 
         string start_time_str = ctime(&start_time_t);
         start_time_str.pop_back(); 
 
+        long long active_zk_time_ms = 0; 
+
         cout << "[TEST] Phase 2: Commit weights and inputs with ZK backend." << endl;
+        
+        // --- 记录 1: Weights 注入耗时 ---
+        auto t1 = high_resolution_clock::now();
         {model_name}PolyWeights poly_weights = inject_{model_name_lower}_weights_to_zk(exec, host_weights);
-        PolyTensor image = exec->input({{N, C, H, W}}, host_input_data);
+        auto t2 = high_resolution_clock::now();
+        if (!MVZK_CONFIG_NN_PUBLIC_WEIGHT) {{
+            active_zk_time_ms += duration_cast<milliseconds>(t2 - t1).count();
+        }}
+
+        // --- 记录 2: Input 注入耗时 ---
+        auto t3 = high_resolution_clock::now();
+        PolyTensor image = MVZK_CONFIG_NN_PUBLIC_INPUT 
+                           ? PolyTensor::from_public({{N, C, H, W}}, host_input_data) 
+                           : exec->input({{N, C, H, W}}, host_input_data);
+        auto t4 = high_resolution_clock::now();
+        if (!MVZK_CONFIG_NN_PUBLIC_INPUT) {{
+            active_zk_time_ms += duration_cast<milliseconds>(t4 - t3).count();
+        }}
 
         cout << "[TEST] Phase 3: Executing {model_name} ZK Forward Pass..." << endl;
+        
+        // --- 记录 3: 前向计算与协议完成耗时 ---
+        auto t5 = high_resolution_clock::now();
         PolyTensor output = {model_name}_Forward(image, poly_weights, bitlen, digdec_k, do_truncation);
-
         PolyTensor::store_self_relation(output, "{model_name}_Final_Logits_Check");
         exec->finalize_protocol();
+        auto t6 = high_resolution_clock::now();
         
-        auto stop_zk = high_resolution_clock::now(); 
+        active_zk_time_ms += duration_cast<milliseconds>(t6 - t5).count();
+
         time_t stop_time_t = system_clock::to_time_t(system_clock::now()); 
         string stop_time_str = ctime(&stop_time_t);
         stop_time_str.pop_back(); 
-
         uint64_t net_io_end = comm(io_arr, num_threads);
-        auto total_ms = duration_cast<milliseconds>(stop_zk - start_zk).count();
+        
+        auto total_ms = active_zk_time_ms;
 
         // --------------------------------------------------
         // 在内存中构建所有报告字符串
@@ -310,7 +353,7 @@ int main(int argc, char** argv) {{
 
         // 2. 生成基础执行报告
         string base_report_str = format_base_report("{model_name}", party, N, C, H, W, bitlen, digdec_k, do_truncation, 
-                                                   num_threads, omp_threads, net_io_start, net_io_end, start_time_str, stop_time_str, total_ms);
+                                                   num_threads, omp_threads, net_io_start, net_io_end, start_time_str, stop_time_str, total_ms, prep_time);
 
         // 实时打印基础报告与 Profiler 到终端
         cout << base_report_str << captured_profiler_str;

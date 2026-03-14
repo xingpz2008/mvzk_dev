@@ -140,6 +140,18 @@ inline uint64_t comm(NetIO** io_arr, int num){
     return c;
 }
 
+inline bool checkSysSettings(){
+    if (MVZK_CONFIG_SCALE >= MVZK_CONFIG_DEFAULT_BITLEN){
+        LOG_ERROR("Bitlen must greater than scale. Now :(MVZK_CONFIG_SCALE >= MVZK_CONFIG_DEFAULT_BITLEN)");
+        return false;
+    } 
+    if (MVZK_CONFIG_NN_PUBLIC_INPUT && MVZK_CONFIG_NN_PUBLIC_WEIGHT){
+        LOG_ERROR("Input and weight CANNOT be public simutanouely. Now: (MVZK_CONFIG_NN_PUBLIC_INPUT && MVZK_CONFIG_NN_PUBLIC_WEIGHT)");
+        return false;
+    }
+    return true;
+}
+
 /*
 LOG_WARN("FFT Optimization is recommended, deg = " << final_checked_item.degree);
 LOG_DEBUG("Check buffer threshold reached, instant check now."); // 这种频繁触发的建议放 DEBUG
